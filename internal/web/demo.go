@@ -4,6 +4,7 @@ import (
 	"context"
 	"fmt"
 	"math"
+	"net/netip"
 	"slices"
 	"strings"
 	"sync"
@@ -29,13 +30,15 @@ type DemoEngine struct {
 	ruleTX  map[string]float64
 	reasons map[string]float64
 	unknown map[uint16]float64
+	acked   map[string]string // alarm kind -> who acknowledged
+	finder  demoFinder
 }
 
 // NewDemoEngine returns a demo engine without a snapshot.
 func NewDemoEngine() *DemoEngine {
 	now := time.Now()
 	return &DemoEngine{started: now.Add(-3*time.Hour - 12*time.Minute), last: now, vlanIn: map[int]float64{}, vlanOut: map[int]float64{},
-		ruleRX: map[string]float64{}, ruleTX: map[string]float64{}, reasons: map[string]float64{}, unknown: map[uint16]float64{}}
+		ruleRX: map[string]float64{}, ruleTX: map[string]float64{}, reasons: map[string]float64{}, unknown: map[uint16]float64{}, acked: map[string]string{}}
 }
 
 // Validate accepts every snapshot.
@@ -49,6 +52,34 @@ func (d *DemoEngine) Apply(_ context.Context, s *compile.Snapshot) (engineapi.Re
 	d.snap = s
 	d.mu.Unlock()
 	return engineapi.Result{OK: true, Hash: s.Hash}, nil
+}
+
+// Ack marks a demo alarm kind as seen (until it stops and comes back).
+func (d *DemoEngine) Ack(_ context.Context, kind, by string) error {
+	d.mu.Lock()
+	d.acked[kind] = by
+	d.mu.Unlock()
+	return nil
+}
+
+// Players invents a few searching and hosting PCs on the first rules.
+func (d *DemoEngine) Players(context.Context) ([]engineapi.Player, error) {
+	d.mu.Lock()
+	s := d.snap
+	d.mu.Unlock()
+	if s == nil || len(s.Rules) == 0 || len(s.VLANs) < 3 {
+		return nil, nil
+	}
+	now := time.Now()
+	var out []engineapi.Player
+	for i := 0; i < 6 && i < len(s.Rules); i++ {
+		v := s.VLANs[1+i%(len(s.VLANs)-1)]
+		ip := v.CIDR.Addr().As4()
+		ip[3] = byte(100 + i*7)
+		out = append(out, engineapi.Player{Rule: s.Rules[i].ID, Src: netip.AddrFrom4(ip), VID: v.VID,
+			First: now.Add(-time.Duration(3+i*4) * time.Minute), Last: now.Add(-time.Duration(i) * time.Second), Count: uint64(40 + i*13)})
+	}
+	return out, nil
 }
 
 // wave is a slow, repeatable pseudo-random value in 0..1 for a slot (VLAN, rule) at a time.
@@ -122,7 +153,7 @@ func (d *DemoEngine) Status(context.Context) (engineapi.Status, error) {
 			d.vlanOut[v.VID] += (rxRate - rates[i]*rxRate/(rxRate+noise)) * dt
 		}
 		st.VLANStats = append(st.VLANStats, engineapi.VLANStat{VID: v.VID, Name: v.Name, Group: v.Group, Interface: fmt.Sprintf("%s.%d", v.Parent, v.VID),
-			In: uint64(d.vlanIn[v.VID]), Out: uint64(d.vlanOut[v.VID]), InRate: uint64(rates[i] + 0.5)})
+			In: uint64(d.vlanIn[v.VID]), Out: uint64(d.vlanOut[v.VID]), InRate: uint64(rates[i] + 0.5), LastIn: time.Now()})
 	}
 	d.rx += uint64((rxRate + noise) * dt)
 	d.sent += uint64(sentRate * dt)
@@ -161,6 +192,14 @@ func (d *DemoEngine) Status(context.Context) (engineapi.Status, error) {
 		st.Alarms = append(st.Alarms, engineapi.Alarm{Kind: "storm", Key: s.Rules[0].ID, Count: uint64(p - 100),
 			Detail: fmt.Sprintf("Regel %s: mehr als 500 Pakete/s, pausiert für 30 s", s.Rules[0].ID),
 			First:  now.Add(-time.Duration(p-100) * time.Second), Last: now})
+	}
+	for i := range st.Alarms {
+		if by, ok := d.acked[st.Alarms[i].Kind]; ok {
+			st.Alarms[i].AckedAt, st.Alarms[i].AckedBy = now, by
+		}
+	}
+	if len(st.Alarms) == 0 {
+		d.acked = map[string]string{} // all quiet: the next incident is open again
 	}
 	return st, nil
 }

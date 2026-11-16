@@ -10,6 +10,7 @@ import (
 	"net/http"
 	"net/http/cookiejar"
 	"net/http/httptest"
+	"net/netip"
 	"net/url"
 	"path/filepath"
 	"regexp"
@@ -28,6 +29,8 @@ import (
 type fakeEngine struct {
 	down    bool
 	applied []*compile.Snapshot
+	acked   []string
+	finder  *engineapi.FinderStart
 }
 
 func (f *fakeEngine) Status(context.Context) (engineapi.Status, error) {
@@ -35,7 +38,8 @@ func (f *fakeEngine) Status(context.Context) (engineapi.Status, error) {
 		return engineapi.Status{}, errors.New("engine not reachable")
 	}
 	st := engineapi.Status{Version: "test", Started: time.Now(), Mode: "observe", RXRate: 1204, SentRate: 0,
-		Alarms:     []engineapi.Alarm{{Kind: "foreign_relay", Key: "1101", Detail: "VLAN 1101 receives frames from 10.10.2.99", Count: 3}},
+		Alarms: []engineapi.Alarm{{Kind: "foreign_relay", Key: "1101", Detail: "VLAN 1101 receives frames from 10.10.2.99", Count: 3, Last: time.Now()},
+			{Kind: "loop", Key: "bc:23757", Detail: "loop seen", Count: 2, AckedAt: time.Now(), AckedBy: "op"}},
 		TopUnknown: []engineapi.PortCount{{Port: 4711, Count: 9}},
 		VLANStats:  []engineapi.VLANStat{{VID: 1100, Name: "Gameserver", Group: "gameserver", In: 10, InRate: 2}, {VID: 1101, Name: "Tisch 1", Group: "tische"}},
 		RuleStats:  []engineapi.RuleStat{{ID: "bc:23757", RX: 5, Relayed: 4}}}
@@ -44,6 +48,40 @@ func (f *fakeEngine) Status(context.Context) (engineapi.Status, error) {
 		st.Mode = f.applied[n-1].Mode
 	}
 	return st, nil
+}
+func (f *fakeEngine) Players(context.Context) ([]engineapi.Player, error) {
+	if f.down {
+		return nil, errors.New("engine not reachable")
+	}
+	return []engineapi.Player{{Rule: "bc:23757", Src: netip.MustParseAddr("10.10.1.10"), VID: 1101, First: time.Now(), Last: time.Now(), Count: 7}}, nil
+}
+func (f *fakeEngine) FinderStart(_ context.Context, req engineapi.FinderStart) error {
+	f.finder = &req
+	return nil
+}
+func (f *fakeEngine) FinderStop(context.Context) error { f.finder = nil; return nil }
+func (f *fakeEngine) Finder(context.Context) (engineapi.FinderStatus, error) {
+	if f.down {
+		return engineapi.FinderStatus{}, errors.New("engine not reachable")
+	}
+	if f.finder == nil {
+		return engineapi.FinderStatus{}, nil
+	}
+	now := time.Now()
+	return engineapi.FinderStatus{Active: true, Started: now.Add(-20 * time.Second), Until: now.Add(time.Minute), VIDs: f.finder.VIDs,
+		Frames: 9, Captured: 9, Groups: []engineapi.FinderGroup{
+			{Kind: "broadcast", Port: 41234, Count: 6, First: now.Add(-10 * time.Second), Last: now, MinLen: 64, MaxLen: 88,
+				Srcs: []netip.Addr{netip.MustParseAddr("10.10.1.23")}, VIDs: []int{1101}, New: true, Sample: []byte("ZOOM-LAN")},
+			{Kind: "broadcast", Port: 27036, Count: 3, First: now.Add(-19 * time.Second), Last: now, MinLen: 42, MaxLen: 42},
+		}}, nil
+}
+func (f *fakeEngine) FinderPcap(_ context.Context, w io.Writer) error {
+	_, err := w.Write([]byte("PCAPDATA"))
+	return err
+}
+func (f *fakeEngine) Ack(_ context.Context, kind, by string) error {
+	f.acked = append(f.acked, kind+"/"+by)
+	return nil
 }
 func (f *fakeEngine) Validate(_ context.Context, s *compile.Snapshot) (engineapi.Result, error) {
 	return engineapi.Result{OK: true, Hash: s.Hash}, nil
@@ -126,7 +164,7 @@ func TestPagesRender(t *testing.T) {
 	c, _ := e.client("admin")
 	for _, down := range []bool{false, true} {
 		e.eng.down = down
-		for _, p := range []string{"/", "/spiele", "/spiele/flatout2", "/spiele/flatout4", "/netz", "/system", "/verlauf", "/notaus", "/dev/komponenten", "/api/v1/status"} {
+		for _, p := range []string{"/", "/spiele", "/spiele/flatout2", "/spiele/flatout4", "/netz", "/system", "/verlauf", "/notaus", "/dev/komponenten", "/api/v1/status", "/spieler", "/spieler?teil=tabelle", "/finder", "/finder?teil=ergebnis", "/finder/neu?kind=multicast&group=239.1.2.3&port=5000"} {
 			code, body := get(t, c, e.srv.URL+p)
 			if code != 200 {
 				t.Errorf("GET %s (engine down=%v) = %d: %.300s", p, down, code, body)
@@ -280,5 +318,195 @@ func TestSecurityHeaders(t *testing.T) {
 	resp.Body.Close()
 	if !strings.Contains(resp.Header.Get("Content-Security-Policy"), "script-src 'self'") || resp.Header.Get("X-Frame-Options") != "DENY" {
 		t.Errorf("headers %v", resp.Header)
+	}
+}
+
+func TestPlayersAndAlarmAck(t *testing.T) {
+	e := setup(t)
+	view, vcsrf := e.client("view")
+	code, body := get(t, view, e.srv.URL+"/spieler")
+	if code != 200 || !strings.Contains(body, "10.10.1.10") || !strings.Contains(body, "FlatOut") || !strings.Contains(body, "Tisch 1") {
+		t.Fatalf("/spieler = %d: %.400s", code, body)
+	}
+	code, frag := get(t, view, e.srv.URL+"/spieler?teil=tabelle")
+	if code != 200 || strings.Contains(frag, "<html") || !strings.Contains(frag, "10.10.1.10") {
+		t.Errorf("fragment = %d: %.200s", code, frag)
+	}
+	// overview: open alarm counted, acknowledged loop only under "Gesehen"; viewers get no button
+	_, ov := get(t, view, e.srv.URL+"/")
+	if !strings.Contains(ov, "Gesehen, läuft noch") || strings.Contains(ov, `action="/alarme/`) {
+		t.Error("viewer overview: seen list missing or ack button shown")
+	}
+	r, _ := view.PostForm(e.srv.URL+"/alarme/foreign_relay/gesehen", url.Values{"csrf": {vcsrf}})
+	r.Body.Close()
+	if r.StatusCode != 403 || len(e.eng.acked) != 0 {
+		t.Errorf("viewer ack = %d, acked %v", r.StatusCode, e.eng.acked)
+	}
+	op, csrf := e.client("op")
+	_, ov = get(t, op, e.srv.URL+"/")
+	if !strings.Contains(ov, `action="/alarme/foreign_relay/gesehen"`) {
+		t.Error("operator overview without ack button")
+	}
+	r, _ = op.PostForm(e.srv.URL+"/alarme/foreign_relay/gesehen", url.Values{"csrf": {csrf}})
+	r.Body.Close()
+	if len(e.eng.acked) != 1 || e.eng.acked[0] != "foreign_relay/op" {
+		t.Errorf("acked %v", e.eng.acked)
+	}
+	r, _ = op.PostForm(e.srv.URL+"/alarme/erfunden/gesehen", url.Values{"csrf": {csrf}})
+	r.Body.Close()
+	if len(e.eng.acked) != 1 {
+		t.Error("unknown alarm kind passed to the engine")
+	}
+	log, _ := e.st.AuditLog(context.Background(), 5)
+	if !slices.ContainsFunc(log, func(a store.AuditEntry) bool { return a.Action == "alarm.ack" && a.User == "op" }) {
+		t.Error("ack not audited")
+	}
+	// live model: open and seen separated
+	v := e.srv.Config.Handler.(*Server).liveNow(context.Background())
+	if len(v.Alarms) != 1 || len(v.Seen) != 1 || v.Seen[0].By != "op" {
+		t.Errorf("live alarms %d seen %d", len(v.Alarms), len(v.Seen))
+	}
+}
+
+func TestMonitoring(t *testing.T) {
+	e := setup(t)
+	anon := &http.Client{}
+	if code, _ := get(t, anon, e.srv.URL+"/api/v1/monitoring"); code != 404 {
+		t.Fatalf("without configured token = %d, want 404", code)
+	}
+	admin, csrf := e.client("admin")
+	if _, body := get(t, admin, e.srv.URL+"/system"); !strings.Contains(body, "noch keins") {
+		t.Error("system page does not say that no token exists")
+	}
+	op, opcsrf := e.client("op")
+	r, _ := op.PostForm(e.srv.URL+"/system/monitoring-token", url.Values{"csrf": {opcsrf}})
+	r.Body.Close()
+	if r.StatusCode != 403 {
+		t.Errorf("operator created a token: %d", r.StatusCode)
+	}
+	r, err := admin.PostForm(e.srv.URL+"/system/monitoring-token", url.Values{"csrf": {csrf}})
+	if err != nil {
+		t.Fatal(err)
+	}
+	b, _ := io.ReadAll(r.Body)
+	r.Body.Close()
+	m := regexp.MustCompile(`id="monitor-token">([A-Za-z0-9_-]+)<`).FindSubmatch(b)
+	if m == nil {
+		t.Fatalf("token not shown: %.300s", b)
+	}
+	tok := string(m[1])
+	if _, body := get(t, admin, e.srv.URL+"/system"); strings.Contains(body, tok) || !strings.Contains(body, "eingerichtet") {
+		t.Error("token shown again or state missing")
+	}
+	call := func(path, tok string) (int, string) {
+		req, _ := http.NewRequest("GET", e.srv.URL+path, nil)
+		if tok != "" {
+			req.Header.Set("Authorization", "Bearer "+tok)
+		}
+		resp, err := anon.Do(req)
+		if err != nil {
+			t.Fatal(err)
+		}
+		defer resp.Body.Close()
+		body, _ := io.ReadAll(resp.Body)
+		return resp.StatusCode, string(body)
+	}
+	if code, _ := call("/api/v1/monitoring", ""); code != 401 {
+		t.Errorf("no token = %d", code)
+	}
+	if code, _ := call("/metrics", tok+"x"); code != 401 {
+		t.Errorf("wrong token = %d", code)
+	}
+	code, body := call("/api/v1/monitoring", tok)
+	var rep map[string]any
+	if code != 200 || json.Unmarshal([]byte(body), &rep) != nil || rep["engine_up"] != float64(1) {
+		t.Fatalf("monitoring = %d: %.300s", code, body)
+	}
+	if a := rep["alarms"].(map[string]any)["foreign_relay"].(map[string]any); a["active"] != float64(1) {
+		t.Errorf("foreign_relay = %v", a)
+	}
+	code, body = call("/metrics", tok)
+	if code != 200 || !strings.Contains(body, "nsrelay_engine_up 1") || !strings.Contains(body, `nsrelay_alarms_active{kind="loop"} 0`) {
+		t.Errorf("metrics = %d: %.300s", code, body)
+	}
+	e.eng.down = true
+	if _, body = call("/api/v1/monitoring", tok); !strings.Contains(body, `"engine_up":0`) {
+		t.Errorf("engine down: %.200s", body)
+	}
+}
+
+func TestPortFinder(t *testing.T) {
+	e := setup(t)
+	view, _ := e.client("view")
+	if code, _ := get(t, view, e.srv.URL+"/finder"); code != 403 {
+		t.Errorf("viewer /finder = %d", code)
+	}
+	op, csrf := e.client("op")
+	code, body := get(t, op, e.srv.URL+"/finder")
+	if code != 200 || !strings.Contains(body, "Noch keine Sitzung") || !strings.Contains(body, `href="/finder"`) {
+		t.Fatalf("/finder = %d: %.300s", code, body)
+	}
+	if !strings.Contains(body, "4711") {
+		t.Error("top unknown ports missing")
+	}
+	r, _ := op.PostForm(e.srv.URL+"/finder/start", url.Values{"csrf": {csrf}, "vid": {"1101"}, "src": {"kein-ip"}, "minuten": {"5"}})
+	r.Body.Close()
+	if e.eng.finder != nil {
+		t.Fatal("bad IP accepted")
+	}
+	r, _ = op.PostForm(e.srv.URL+"/finder/start", url.Values{"csrf": {csrf}, "vid": {"1101", "1102"}, "minuten": {"99"}})
+	r.Body.Close()
+	if e.eng.finder == nil || e.eng.finder.Seconds != 600 || len(e.eng.finder.VIDs) != 2 {
+		t.Fatalf("start: %+v", e.eng.finder)
+	}
+	_, frag := get(t, op, e.srv.URL+"/finder?teil=ergebnis")
+	if strings.Contains(frag, "<html") || !strings.Contains(frag, "41234") || !strings.Contains(frag, "Spiel anlegen") ||
+		strings.Contains(frag, "27036") || !strings.Contains(frag, "1 Ziele mit bekanntem Lärm") || !strings.Contains(frag, "ZOOM-LAN.") {
+		t.Errorf("fragment: %.900s", frag)
+	}
+	if _, frag = get(t, op, e.srv.URL+"/finder?teil=ergebnis&laerm=1"); !strings.Contains(frag, "Steam (Lärm)") {
+		t.Error("noise not shown on request")
+	}
+	resp, _ := op.Get(e.srv.URL + "/finder/mitschnitt.pcap")
+	pc, _ := io.ReadAll(resp.Body)
+	resp.Body.Close()
+	if string(pc) != "PCAPDATA" || !strings.Contains(resp.Header.Get("Content-Disposition"), ".pcap") {
+		t.Errorf("pcap = %q %v", pc, resp.Header)
+	}
+	if _, form := get(t, op, e.srv.URL+"/finder/neu?kind=broadcast&port=41234"); !strings.Contains(form, `value="41234"`) {
+		t.Error("new game form not prefilled")
+	}
+	// create: invalid id shows the form again, then a valid one is created, enabled and applied
+	r, _ = op.PostForm(e.srv.URL+"/finder/neu", url.Values{"csrf": {csrf}, "name": {"Zoom Test"}, "id": {"Böse ID"}, "kind": {"broadcast"}, "ports": {"41234"}, "direction": {"query"}})
+	b, _ := io.ReadAll(r.Body)
+	r.Body.Close()
+	if r.StatusCode != 422 || !strings.Contains(string(b), "Kennung") {
+		t.Errorf("invalid id = %d", r.StatusCode)
+	}
+	applied := len(e.eng.applied)
+	r, _ = op.PostForm(e.srv.URL+"/finder/neu", url.Values{"csrf": {csrf}, "name": {"FlatOut: Ultimate Carnage (ZOOM)"}, "kind": {"broadcast"}, "ports": {"41234"}, "direction": {"both"}, "enable": {"1"}})
+	b, _ = io.ReadAll(r.Body)
+	r.Body.Close()
+	if r.StatusCode != 200 || !strings.Contains(string(b), "angelegt und eingeschaltet") {
+		t.Fatalf("create = %d: %.300s", r.StatusCode, b)
+	}
+	if !strings.HasSuffix(r.Request.URL.Path, "/spiele/flatout_ultimate_carnage_zoom") || len(e.eng.applied) != applied+1 {
+		t.Errorf("redirect %s, applied %d", r.Request.URL.Path, len(e.eng.applied)-applied)
+	}
+	games, _ := e.st.Games(context.Background())
+	i := slices.IndexFunc(games, func(g store.GameRow) bool { return g.ID == "flatout_ultimate_carnage_zoom" })
+	if i < 0 || games[i].Origin != "sniffer" || !games[i].Enabled || games[i].Confidence != "low" {
+		t.Fatalf("stored game: %+v", games[i])
+	}
+	// same id again: refused
+	r, _ = op.PostForm(e.srv.URL+"/finder/neu", url.Values{"csrf": {csrf}, "name": {"FlatOut: Ultimate Carnage (ZOOM)"}, "kind": {"broadcast"}, "ports": {"41234"}})
+	r.Body.Close()
+	if r.StatusCode != 422 {
+		t.Errorf("duplicate = %d", r.StatusCode)
+	}
+	r, _ = op.PostForm(e.srv.URL+"/finder/stop", url.Values{"csrf": {csrf}})
+	r.Body.Close()
+	if e.eng.finder != nil {
+		t.Error("stop not passed on")
 	}
 }

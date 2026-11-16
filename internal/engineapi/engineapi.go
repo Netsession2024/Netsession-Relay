@@ -16,6 +16,7 @@ import (
 	"io"
 	"net"
 	"net/http"
+	"net/netip"
 	"os"
 	"time"
 
@@ -34,12 +35,24 @@ type RuleStat struct {
 
 // Alarm mirrors engine.Alarm without importing the Linux engine.
 type Alarm struct {
-	Kind   string    `json:"kind"`
-	Key    string    `json:"key"`
-	Detail string    `json:"detail"`
-	First  time.Time `json:"first"`
-	Last   time.Time `json:"last"`
-	Count  uint64    `json:"count"`
+	Kind    string    `json:"kind"`
+	Key     string    `json:"key"`
+	Detail  string    `json:"detail"`
+	First   time.Time `json:"first"`
+	Last    time.Time `json:"last"`
+	Count   uint64    `json:"count"`
+	AckedAt time.Time `json:"acked_at"`
+	AckedBy string    `json:"acked_by,omitempty"`
+}
+
+// Player mirrors engine.Player: a sender of discovery packets for a rule.
+type Player struct {
+	Rule  string     `json:"rule"`
+	Src   netip.Addr `json:"src"`
+	VID   int        `json:"vid"`
+	First time.Time  `json:"first"`
+	Last  time.Time  `json:"last"`
+	Count uint64     `json:"count"`
 }
 
 // Status is returned by GET /v1/status.
@@ -73,6 +86,8 @@ type VLANStat struct {
 	In        uint64 `json:"in"`
 	Out       uint64 `json:"out"`
 	InRate    uint64 `json:"in_per_s"`
+	// LastIn is when the VLAN last received a frame since the engine started (zero: nothing yet).
+	LastIn time.Time `json:"last_in"`
 }
 
 // PortCount is a broadcast port without rule and how often it was seen.
@@ -93,6 +108,9 @@ type Engine interface {
 	Status() Status
 	Validate(*compile.Snapshot) error
 	Apply(*compile.Snapshot) error
+	Players() []Player
+	Ack(kind, by string) int
+	FinderEngine
 }
 
 // Handler returns the HTTP handler for an engine.
@@ -118,6 +136,19 @@ func Handler(e Engine) http.Handler {
 	mux.HandleFunc("POST /v1/validate", snapshotOp(e.Validate))
 	mux.HandleFunc("POST /v1/apply", snapshotOp(e.Apply))
 	mux.HandleFunc("GET /v1/events", func(w http.ResponseWriter, r *http.Request) { events(w, r, e) })
+	mux.HandleFunc("GET /v1/players", func(w http.ResponseWriter, r *http.Request) {
+		writeJSON(w, http.StatusOK, e.Players())
+	})
+	mux.HandleFunc("POST /v1/alarms/ack", func(w http.ResponseWriter, r *http.Request) {
+		var req struct{ Kind, By string }
+		if err := json.NewDecoder(io.LimitReader(r.Body, 4096)).Decode(&req); err != nil || req.Kind == "" {
+			writeJSON(w, http.StatusBadRequest, Result{Error: "kind missing"})
+			return
+		}
+		n := e.Ack(req.Kind, req.By)
+		writeJSON(w, http.StatusOK, map[string]int{"acked": n})
+	})
+	finderRoutes(mux, e)
 	return mux
 }
 
@@ -219,6 +250,34 @@ func (c *Client) Status(ctx context.Context) (Status, error) {
 	}
 	defer resp.Body.Close()
 	return st, json.NewDecoder(resp.Body).Decode(&st)
+}
+
+// Players fetches the recent discovery senders.
+func (c *Client) Players(ctx context.Context) ([]Player, error) {
+	var out []Player
+	req, _ := http.NewRequestWithContext(ctx, http.MethodGet, "http://engine/v1/players", nil)
+	resp, err := c.hc.Do(req)
+	if err != nil {
+		return nil, fmt.Errorf("engine not reachable on %s: %w", c.Socket, err)
+	}
+	defer resp.Body.Close()
+	return out, json.NewDecoder(resp.Body).Decode(&out)
+}
+
+// Ack acknowledges all alarms of a kind.
+func (c *Client) Ack(ctx context.Context, kind, by string) error {
+	b, _ := json.Marshal(map[string]string{"Kind": kind, "By": by})
+	req, _ := http.NewRequestWithContext(ctx, http.MethodPost, "http://engine/v1/alarms/ack", bytes.NewReader(b))
+	req.Header.Set("Content-Type", "application/json")
+	resp, err := c.hc.Do(req)
+	if err != nil {
+		return fmt.Errorf("engine not reachable on %s: %w", c.Socket, err)
+	}
+	resp.Body.Close()
+	if resp.StatusCode != http.StatusOK {
+		return fmt.Errorf("engine: %s", resp.Status)
+	}
+	return nil
 }
 
 // Validate asks the engine to check a snapshot.

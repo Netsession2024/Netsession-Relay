@@ -265,3 +265,67 @@ func BenchmarkProcessGuarded(b *testing.B) {
 		p.Process(tb, t1, fr, emit)
 	}
 }
+
+func TestAlarmAck(t *testing.T) {
+	c := newClock()
+	var a Alarms
+	a.Raise(AlarmForeignRelay, "1101", c.now(), "x")
+	a.Raise(AlarmForeignRelay, "1102", c.now(), "x")
+	a.Raise(AlarmLoop, "bc:1", c.now(), "x")
+	if n := a.Ack(AlarmForeignRelay, "op", c.now()); n != 2 {
+		t.Fatalf("acked %d", n)
+	}
+	// keeps occurring without a pause: stays acknowledged
+	c.add(10 * time.Second)
+	a.Raise(AlarmForeignRelay, "1101", c.now(), "x")
+	for _, x := range a.List() {
+		if x.Kind == AlarmForeignRelay && (x.AckedAt.IsZero() || x.AckedBy != "op") {
+			t.Errorf("continuing alarm lost its acknowledgement: %+v", x)
+		}
+		if x.Kind == AlarmLoop && !x.AckedAt.IsZero() {
+			t.Error("other kind acknowledged too")
+		}
+	}
+	// quiet for longer than 60 s, then again: new incident, open again
+	c.add(2 * time.Minute)
+	a.Raise(AlarmForeignRelay, "1101", c.now(), "x")
+	for _, x := range a.List() {
+		if x.Kind == AlarmForeignRelay && x.Key == "1101" && !x.AckedAt.IsZero() {
+			t.Error("new incident after a quiet gap is still acknowledged")
+		}
+	}
+}
+
+func TestPlayers(t *testing.T) {
+	c := newClock()
+	g := guardAt(c)
+	tb := newTable(t, limitsSnapshot(testSnapshot(defaultRules()...)))
+	p := NewProcessor(&Counters{}, g)
+	for range 3 {
+		process(p, tb, t1, frame("10.10.1.10", "255.255.255.255", 50000, 23757, []byte("q")))
+	}
+	process(p, tb, t2, frame("10.10.2.20", "10.10.2.255", 23757, 23757, make([]byte, 106)))
+	process(p, tb, t1, frame("10.10.1.10", "255.255.255.255", 1, 4711, []byte("unknown port")))
+	process(p, tb, t1, frame("10.10.2.99", "255.255.255.255", 1, 23757, []byte("foreign")))
+	list := g.Players.List()
+	if len(list) != 2 {
+		t.Fatalf("players %+v", list)
+	}
+	for _, pl := range list {
+		if pl.Rule != "bc:23757" || (pl.VID == 1101 && pl.Count != 3) {
+			t.Errorf("player %+v", pl)
+		}
+	}
+	c.add(16 * time.Minute)
+	g.Players.GC(c.now())
+	if n := len(g.Players.List()); n != 0 {
+		t.Errorf("%d players after GC", n)
+	}
+	var ps Players
+	for i := range maxPlayers + 10 {
+		ps.Seen("r", netip.AddrFrom4([4]byte{10, byte(i >> 16), byte(i >> 8), byte(i)}), 1, c.now().Add(time.Duration(i)))
+	}
+	if n := len(ps.List()); n != maxPlayers {
+		t.Errorf("table not bounded: %d", n)
+	}
+}

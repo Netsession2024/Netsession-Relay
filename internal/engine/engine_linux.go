@@ -6,8 +6,10 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"io"
 	"log/slog"
 	"net"
+	"net/netip"
 	"os"
 	"os/signal"
 	"sort"
@@ -68,6 +70,7 @@ type rateSample struct {
 	rxRate   uint64
 	sentRate uint64
 	vlanRate map[int]uint64
+	lastIn   map[int]time.Time // VID -> when the in counter last grew
 }
 
 // Guard returns the protection state (alarms, standby) for status output.
@@ -169,6 +172,54 @@ func (e *Engine) Apply(s *compile.Snapshot) error {
 	return compile.WriteSnapshotFile(e.Path, s)
 }
 
+// Players lists recent discovery senders (engine API).
+func (e *Engine) Players() []engineapi.Player {
+	list := e.guard.Players.List()
+	out := make([]engineapi.Player, len(list))
+	for i, p := range list {
+		out[i] = engineapi.Player(p)
+	}
+	return out
+}
+
+// Ack acknowledges all alarms of a kind (engine API).
+func (e *Engine) Ack(kind, by string) int {
+	n := e.guard.Alarms.Ack(kind, by, time.Now())
+	e.Log.Info("alarm acknowledged", "kind", kind, "by", by, "alarms", n)
+	return n
+}
+
+// FinderStart starts a port finder session (engine API).
+func (e *Engine) FinderStart(req engineapi.FinderStart) error {
+	fr := FinderRequest{VIDs: req.VIDs, Duration: time.Duration(req.Seconds) * time.Second}
+	if req.Src != "" {
+		a, err := netip.ParseAddr(req.Src)
+		if err != nil || !a.Is4() {
+			return fmt.Errorf("bad sender address %q", req.Src)
+		}
+		fr.Src = a
+	}
+	if err := e.guard.Finder.Start(fr, time.Now()); err != nil {
+		return err
+	}
+	e.Log.Info("port finder started", "vids", req.VIDs, "src", req.Src, "seconds", req.Seconds)
+	return nil
+}
+
+// FinderStop ends the port finder session (engine API).
+func (e *Engine) FinderStop() {
+	e.guard.Finder.Stop(time.Now())
+	e.Log.Info("port finder stopped")
+}
+
+// Finder reports the port finder state (engine API).
+func (e *Engine) Finder() engineapi.FinderStatus {
+	return FinderAPI(e.guard.Finder.Status(time.Now()))
+}
+
+// FinderPcap writes the capture of the last session (engine API).
+func (e *Engine) FinderPcap(w io.Writer) error { return e.guard.Finder.WritePcap(w) }
+
 // Status reports the engine state (engine API).
 func (e *Engine) Status() engineapi.Status {
 	st := engineapi.Status{Version: e.Version, Started: e.started, Standby: e.guard.Standby(),
@@ -186,7 +237,7 @@ func (e *Engine) Status() engineapi.Status {
 			vs := engineapi.VLANStat{VID: v.VID, Name: v.Name, Group: v.Group, Interface: netif.LinkName(v.VLAN),
 				In: e.Counters.VLANIn[v.VID&4095].Load(), Out: e.Counters.VLANOut[v.VID&4095].Load()}
 			if rs != nil {
-				vs.InRate = rs.vlanRate[v.VID]
+				vs.InRate, vs.LastIn = rs.vlanRate[v.VID], rs.lastIn[v.VID]
 			}
 			st.VLANStats = append(st.VLANStats, vs)
 		}
@@ -372,11 +423,14 @@ func (e *Engine) everySecond(n int) {
 	}
 	if n%60 == 0 {
 		e.guard.GC(now)
+		e.guard.Players.GC(now)
 	}
 }
 
 func (e *Engine) sampleRates(st *state) {
-	cur := rateSample{rx: e.Counters.RX.Load(), sent: e.Counters.Sent.Load(), vlanIn: map[int]uint64{}, vlanRate: map[int]uint64{}}
+	now := time.Now()
+	cur := rateSample{rx: e.Counters.RX.Load(), sent: e.Counters.Sent.Load(), vlanIn: map[int]uint64{}, vlanRate: map[int]uint64{},
+		lastIn: map[int]time.Time{}}
 	prev := e.prevRates
 	if prev.vlanIn != nil {
 		cur.rxRate, cur.sentRate = cur.rx-prev.rx, cur.sent-prev.sent
@@ -384,8 +438,16 @@ func (e *Engine) sampleRates(st *state) {
 	for _, v := range st.table.VLANs {
 		in := e.Counters.VLANIn[v.VID&4095].Load()
 		cur.vlanIn[v.VID] = in
+		if t, ok := prev.lastIn[v.VID]; ok {
+			cur.lastIn[v.VID] = t
+		}
 		if p, ok := prev.vlanIn[v.VID]; ok {
 			cur.vlanRate[v.VID] = in - p
+			if in > p {
+				cur.lastIn[v.VID] = now
+			}
+		} else if in > 0 {
+			cur.lastIn[v.VID] = now
 		}
 	}
 	e.prevRates = cur

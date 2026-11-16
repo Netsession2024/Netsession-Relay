@@ -119,6 +119,75 @@
     });
   });
 
+  // ---- pages with a server-rendered fragment that refreshes every 5 s (players, port finder) ----
+  // The swap must not disturb someone reading: opened <details data-key> stay open, keyboard focus stays
+  // on the same link or summary, and nothing is replaced while text inside is selected (copying bytes).
+  function focusMark(box) {
+    var a = doc.activeElement;
+    if (!a || !box.contains(a)) return null;
+    if (a.tagName === "SUMMARY" && a.parentNode.dataset.key) return { key: a.parentNode.dataset.key };
+    if (a.getAttribute("href")) return { href: a.getAttribute("href") };
+    return null;
+  }
+  all("[data-refresh]").forEach(function (box) {
+    var last = null;
+    setInterval(function () {
+      if (doc.hidden) return;
+      fetch(box.dataset.refresh, { credentials: "same-origin" }).then(function (r) { return r.ok ? r.text() : null; }).then(function (html) {
+        if (html === null || html === last) return;
+        var sel = window.getSelection && window.getSelection();
+        if (sel && !sel.isCollapsed && sel.anchorNode && box.contains(sel.anchorNode)) return;
+        var open = all("details[open][data-key]", box).map(function (d) { return d.dataset.key; });
+        var mark = focusMark(box);
+        last = html;
+        box.innerHTML = html;
+        localTimes(box);
+        all("details[data-key]", box).forEach(function (d) {
+          if (open.indexOf(d.dataset.key) >= 0) d.open = true;
+          if (mark && mark.key === d.dataset.key) d.querySelector("summary").focus();
+        });
+        if (mark && mark.href) all("a[href]", box).some(function (a) {
+          if (a.getAttribute("href") !== mark.href) return false;
+          a.focus();
+          return true;
+        });
+      }).catch(function () {});
+    }, 5000);
+  });
+
+  // ---- copy button (monitoring token); hidden without JavaScript, the text is selectable anyway ----
+  all("[data-copy]").forEach(function (btn) {
+    var src = $(btn.dataset.copy);
+    if (!src) return;
+    btn.hidden = false;
+    btn.addEventListener("click", function () {
+      var mark = function () {
+        var r = doc.createRange();
+        r.selectNodeContents(src);
+        var s = window.getSelection();
+        s.removeAllRanges();
+        s.addRange(r);
+        toast("Markiert. Jetzt mit Strg+C kopieren.", "warn");
+      };
+      if (navigator.clipboard && window.isSecureContext) {
+        navigator.clipboard.writeText(src.textContent).then(function () { toast(btn.dataset.copyDone || "Kopiert."); }, mark);
+      } else mark();
+    });
+  });
+
+  // ---- a select that shows a field only for one value (multicast group); the hidden field is not sent ----
+  all("select[data-toggles]").forEach(function (sel) {
+    var field = $(sel.dataset.toggles);
+    if (!field) return;
+    var sync = function () {
+      var on = sel.value === sel.dataset.togglesOn;
+      field.hidden = !on;
+      all("input", field).forEach(function (i) { i.disabled = !on; });
+    };
+    sel.addEventListener("change", sync);
+    sync();
+  });
+
   // ---- games: search + filter ----
   var games = $("games"), applyFilter = function () {};
   if (games) {
@@ -244,12 +313,46 @@
       if (a.hint) box.appendChild(el("p", "", a.hint));
       box.appendChild(el("p", "small muted")).appendChild(el("span", "mono", a.where));
       box.appendChild(el("p", "small muted", a.detail));
+      if (ul.hasAttribute("data-can-ack")) box.appendChild(ackForm(a.kind));
       li.appendChild(box);
       frag.appendChild(li);
     });
     ul.replaceChildren(frag);
     ul.hidden = !list.length;
     $("alarms-empty").hidden = list.length > 0;
+  }
+  function ackForm(kind) {
+    var f = el("form", "ack-form");
+    f.method = "post";
+    f.action = "/alarme/" + encodeURIComponent(kind) + "/gesehen";
+    var c = el("input"); c.type = "hidden"; c.name = "csrf"; c.value = csrf; f.appendChild(c);
+    var b = el("button", "btn-outline btn-sm"); b.type = "submit";
+    b.appendChild(icon("check")); b.appendChild(el("span", "", "Gesehen"));
+    f.appendChild(b);
+    return f;
+  }
+  function seen(list) {
+    var box = $("seen-box"), ul = $("alarms-seen");
+    if (!box || !ul) return;
+    list = list || [];
+    var key = JSON.stringify(list);
+    if (prev.seen === key) return;
+    prev.seen = key;
+    box.hidden = !list.length;
+    setText($("seen-count"), String(list.length));
+    var frag = doc.createDocumentFragment();
+    list.forEach(function (a) {
+      var li = el("li", "alarm alarm-seen"), box2 = el("div"), title = el("p", "alarm-title");
+      li.appendChild(icon("check"));
+      title.appendChild(el("b", "", a.title));
+      title.appendChild(doc.createTextNode(" "));
+      title.appendChild(el("span", "alarm-meta", num(a.count) + "× · zuletzt " + fmtTime(new Date(a.last), "time") + (a.acked_by ? " · gesehen von " + a.acked_by : "")));
+      box2.appendChild(title);
+      box2.appendChild(el("p", "small muted")).appendChild(el("span", "mono", a.where));
+      li.appendChild(box2);
+      frag.appendChild(li);
+    });
+    ul.replaceChildren(frag);
   }
 
   function apply(v) {
@@ -323,6 +426,7 @@
     }
 
     alarms(v.alarms);
+    seen(v.seen);
     all("tbody[data-rows]").forEach(function (tb) { rowsOf(tb, v[tb.dataset.rows] || []); });
 
     // diagnosis: fetch the server-rendered fragment again when something relevant flipped

@@ -57,4 +57,11 @@ Optional per discovery entry: `dst_mode` (`keep` | `subnet` | `limited`), `ttl_m
    changes on purpose, update it with `go test ./internal/compile -update`.
 4. Open a pull request, or use the issue template "New game / port correction" if you only have the facts.
 
-The web UI's port finder (planned) will turn a capture at the LAN directly into a new entry.
+At the LAN the **Port-Finder** page does step 1 without Wireshark: pick the VLAN (and the test PC's address), start a
+session (up to 10 minutes), open the game's LAN browser. Every broadcast/multicast destination shows up with packet
+count, interval, size, senders and the first 64 bytes; destinations that appear after the start are marked *neu*,
+common noise (Steam 27036, mDNS, SSDP, NetBIOS …) can be hidden, and ports that belong to a game in the database
+but switched off are named. **Spiel anlegen** turns an unknown port into a game (`origin: sniffer`,
+`confidence: low`) and can switch it on right away. Download the capture as `.pcap` and attach it to the pull request
+or issue. On the command line: `nsrelay admin finder-start -vlans 1101 -src 10.10.1.23 -seconds 300`,
+`nsrelay admin finder`, `nsrelay admin finder-pcap capture.pcap`.

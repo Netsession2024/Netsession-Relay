@@ -8,6 +8,7 @@ import (
 	"encoding/json"
 	"errors"
 	"html/template"
+	"io"
 	"io/fs"
 	"log/slog"
 	"net"
@@ -33,6 +34,12 @@ type Engine interface {
 	Status(context.Context) (engineapi.Status, error)
 	Validate(context.Context, *compile.Snapshot) (engineapi.Result, error)
 	Apply(context.Context, *compile.Snapshot) (engineapi.Result, error)
+	Players(context.Context) ([]engineapi.Player, error)
+	Ack(ctx context.Context, kind, by string) error
+	FinderStart(context.Context, engineapi.FinderStart) error
+	FinderStop(context.Context) error
+	Finder(context.Context) (engineapi.FinderStatus, error)
+	FinderPcap(context.Context, io.Writer) error
 }
 
 // Server is the web part.
@@ -140,8 +147,19 @@ func (s *Server) routes() {
 	m.Handle("GET /verlauf", s.need(store.RoleAdmin, s.history))
 	m.Handle("GET /protokoll", http.RedirectHandler("/verlauf", http.StatusSeeOther))
 	m.Handle("GET /api/v1/events", s.need(store.RoleViewer, s.apiEvents))
+	m.Handle("GET /spieler", s.need(store.RoleViewer, s.players))
+	m.Handle("POST /alarme/{kind}/gesehen", s.need(store.RoleOperator, s.ackAlarm))
+	m.Handle("GET /finder", s.need(store.RoleOperator, s.finder))
+	m.Handle("POST /finder/start", s.need(store.RoleOperator, s.finderStart))
+	m.Handle("POST /finder/stop", s.need(store.RoleOperator, s.finderStop))
+	m.Handle("GET /finder/mitschnitt.pcap", s.need(store.RoleOperator, s.finderPcap))
+	m.Handle("GET /finder/neu", s.need(store.RoleOperator, s.finderNewForm))
+	m.Handle("POST /finder/neu", s.need(store.RoleOperator, s.finderNewGame))
 	m.Handle("GET /dev/komponenten", s.need(store.RoleViewer, s.components))
 	m.Handle("GET /api/v1/status", s.need(store.RoleViewer, s.apiStatus))
+	m.Handle("GET /api/v1/monitoring", s.monitorAuth(s.apiMonitoring))
+	m.Handle("GET /metrics", s.monitorAuth(s.metrics))
+	m.Handle("POST /system/monitoring-token", s.need(store.RoleAdmin, s.newMonitorToken))
 	s.mux = m
 }
 

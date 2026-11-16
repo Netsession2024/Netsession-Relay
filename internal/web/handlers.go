@@ -308,7 +308,8 @@ func (s *Server) toggleVLAN(w http.ResponseWriter, r *http.Request) {
 
 func (s *Server) system(w http.ResponseWriter, r *http.Request) {
 	mode, _ := s.Store.Setting(r.Context(), store.SettingMode, compile.ModeActive)
-	s.render(w, r, "system", "System", "system", map[string]any{"Mode": mode})
+	tok, _ := s.Store.Setting(r.Context(), settingMonitorToken, "")
+	s.render(w, r, "system", "System", "system", map[string]any{"Mode": mode, "MonitorSet": tok != ""})
 }
 
 type auditView struct {
@@ -336,6 +337,11 @@ var auditTexts = map[string]string{
 	"user.set_password": "Passwort gesetzt",
 	"emergency_stop":    "Not-Aus ausgelöst",
 	"backup.download":   "Backup heruntergeladen",
+	"monitor.token":     "Monitoring-Token neu erzeugt",
+	"alarm.ack":         "Alarm als gesehen markiert",
+	"finder.start":      "Port-Finder gestartet",
+	"finder.pcap":       "Mitschnitt heruntergeladen",
+	"game.create":       "Spiel angelegt",
 }
 
 func auditOf(a store.AuditEntry) auditView {

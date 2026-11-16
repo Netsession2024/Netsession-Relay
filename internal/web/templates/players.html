@@ -1,0 +1,31 @@
+{{define "players-table"}}
+{{if .Err}}<p class="notice notice-danger">{{icon "alert"}}<span>Die Engine antwortet nicht. Die Liste kommt wieder, sobald sie läuft.</span></p>
+{{else if .Rows}}
+<div class="tablewrap"><table class="players">
+  <thead><tr><th>Spiel</th><th>Rolle</th><th>Netz</th><th>Adresse</th><th class="col-opt">Seit</th><th>Zuletzt</th><th class="num col-opt">Pakete</th></tr></thead>
+  <tbody>
+  {{range .Rows}}<tr>
+    <td>{{if .GameID}}<a class="rowlink" href="/spiele/{{.GameID}}">{{.Games}}</a>{{else}}<span class="mono">{{.Games}}</span>{{end}}</td>
+    <td><span class="tag role {{.RoleCls}}">{{.Role}}</span></td>
+    <td><span class="netname"><span class="key key-sm" aria-hidden="true">{{.Key}}</span><span>{{.VLAN}}<br><span class="mono small muted">VLAN {{.VID}}</span></span></span></td>
+    <td class="mono">{{.IP}}</td>
+    <td class="col-opt nowrap">{{ts .First "time"}}</td>
+    <td class="nowrap">{{ts .Last "time"}}</td>
+    <td class="num mono col-opt">{{num .Count}}</td>
+  </tr>{{end}}
+  </tbody>
+</table></div>
+{{else}}<p class="quiet">{{icon "info"}}<span>Gerade sucht oder hostet niemand ein Spiel. Sobald jemand den LAN-Browser öffnet, steht es hier.</span></p>{{end}}
+{{end}}
+
+{{define "content"}}
+<span class="bar"></span>
+<h1>Wer <em>spielt</em> was</h1>
+<p class="lead">Alle, die in den letzten 15 Minuten ein Spiel gesucht oder angeboten haben. Aktualisiert sich alle 5 Sekunden.</p>
+<div id="players" class="section-first" data-refresh="/spieler?teil=tabelle">{{template "players-table" .Data}}</div>
+<dl class="rolekey">
+  <div><dt><span class="tag role role-host">hostet</span></dt><dd>Das Spiel meldet einen offenen Server.</dd></div>
+  <div><dt><span class="tag role role-search">sucht</span></dt><dd>Jemand hat den LAN-Browser offen.</dd></div>
+  <div><dt><span class="tag role role-search">aktiv</span></dt><dd>Sucht oder hostet. Am Paket nicht zu unterscheiden (z. B. FlatOut).</dd></div>
+</dl>
+{{end}}

@@ -244,10 +244,20 @@ func (p *Processor) process(t *Table, in int, frame []byte, emit Emit) Reason {
 	default:
 		return DropNotBroadcast
 	}
+	if p.G != nil && p.G.Finder.active.Load() {
+		id := ""
+		if rule != nil {
+			id = rule.ID
+		}
+		p.G.Finder.Observe(vin.VID, &f, frame, id, p.G.Now())
+	}
 	if rule == nil {
 		return DropUnknownPort
 	}
 	rule.rx.Add(1)
+	if p.G != nil {
+		p.G.Players.Seen(rule.ID, f.Src, vin.VID, p.G.Now())
+	}
 	// 5. targets
 	targets := rule.targets[in]
 	if len(targets) == 0 {

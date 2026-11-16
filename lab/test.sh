@@ -132,6 +132,15 @@ if [ -n "$ENGINE_PID" ]; then
   flatout "Rollback auf Revision 2 -> FlatOut wieder aus" 50012 "-none"
   check "admin rollback 3 (Revision 5)" "$NS" admin rollback 3
   check "admin revisions zeigt 5 Stände" sh -c "\"$NS\" admin revisions | grep -c '^[0-9]' | grep -qx 5"
+  # port finder (phase 8): session on table 1 only, unknown port 41234 shows up, table 2 is filtered out
+  check "finder-start auf Tisch 1" "$NS" admin finder-start -vlans 1101 -seconds 30
+  ip netns exec t1 "$NS" lab send -iface eth0 -src 10.10.1.10 -dst 255.255.255.255 -sport 50030 -dport 41234 -size 20 -count 3
+  ip netns exec t2 "$NS" lab send -iface eth0 -src 10.10.2.10 -dst 255.255.255.255 -sport 50030 -dport 41235 -size 20 -count 3
+  sleep 0.3
+  check "finder zeigt Port 41234 als unbekannt" sh -c "\"$NS\" admin finder | grep -q '41234  UNKNOWN'"
+  check "finder ignoriert Tisch 2" sh -c "! \"$NS\" admin finder | grep -q 41235"
+  check "finder-pcap schreibt den Mitschnitt" sh -c "\"$NS\" admin finder-pcap /tmp/nsrelay/finder.pcap && [ \$(stat -c %s /tmp/nsrelay/finder.pcap) -gt 150 ]"
+  check "finder-stop" "$NS" admin finder-stop
   check "backup schreibt .db und .yaml" sh -c "\"$NS\" backup -dir /tmp/nsrelay/backups -keep 3 && ls /tmp/nsrelay/backups/*.db /tmp/nsrelay/backups/*.yaml"
 
   # engine restarts without web and database from active.json (written by the last apply)

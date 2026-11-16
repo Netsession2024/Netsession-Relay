@@ -521,3 +521,66 @@ kbd { font-size: var(--ns-text-label); color: var(--ns-gray-400); border: 1px so
 @media (prefers-reduced-motion: reduce) {
   *, *::before, *::after { transition: none !important; animation: none !important; scroll-behavior: auto !important; }
 }
+
+/* ---- acknowledged alarms, players page (phase 7) ---- */
+.alarms-seen .alarm .ic, .alarm-seen .ic { color: var(--ns-gray-400); }
+.ack-form { margin-top: var(--ns-space-2); }
+.seen { margin-top: var(--ns-space-4); }
+/* role: a tag, the word carries the meaning, green only supports "hostet" */
+.role-host { border-color: var(--ns-status-success); color: var(--ns-status-success); }
+.role-search { color: var(--ns-gray-300); }
+.players .rowlink { overflow-wrap: anywhere; }
+.rolekey { margin: var(--ns-space-4) 0 0; display: flex; flex-direction: column; gap: var(--ns-space-2); font-size: var(--ns-text-small); color: var(--ns-gray-400); }
+.rolekey > div { display: flex; align-items: baseline; gap: var(--ns-space-3); }
+.rolekey dt { flex: none; min-width: 64px; }
+.rolekey dd { margin: 0; }
+
+/* ---- shared form bits (phase 8) ---- */
+input[type="checkbox"] { min-height: 0; }
+select { cursor: pointer; }
+select:hover { border-color: var(--ns-gray-100); }
+.radios legend { padding: 0; margin-bottom: var(--ns-space-2); }
+.hint { margin: 0; font-size: var(--ns-text-small); color: var(--ns-gray-400); }
+.actions { display: flex; flex-wrap: wrap; gap: var(--ns-space-3); align-items: center; margin: 0; }
+.nowline { flex-wrap: wrap; }
+.facts dd { min-width: 0; overflow-wrap: anywhere; }
+
+/* monitoring token: shown once, easy to copy */
+.tokenbox > div { flex: 1; min-width: 0; }
+.tokenbox p { margin: 0; }
+.tokenbox .tokenline { display: flex; flex-wrap: wrap; align-items: center; gap: var(--ns-space-3); margin-top: var(--ns-space-3); }
+.token {
+  flex: 1 1 260px; min-width: 0; padding: var(--ns-space-3); word-break: break-all; user-select: all; font-size: var(--ns-text-small);
+  color: var(--ns-gray-100); background: var(--ns-ink-950); border: 1px solid var(--edge); border-radius: var(--ns-radius-md);
+}
+#monitoring .facts { margin-top: var(--ns-space-4); }
+
+/* ---- port finder ---- */
+.picks { display: grid; grid-template-columns: repeat(auto-fill, minmax(150px, 1fr)); gap: var(--ns-space-2); }
+.picks .radio { padding: var(--ns-space-3); align-items: center; min-height: 44px; }
+.picks .radio input { margin: 0; }
+/* steps as key caps: the brand's single key motif instead of plain list numbers */
+.howto { list-style: none; margin: 0; padding: 0; display: flex; flex-direction: column; gap: var(--ns-space-3); color: var(--ns-gray-300); counter-reset: howto; max-width: 52ch; }
+.howto li { counter-increment: howto; display: grid; grid-template-columns: 34px minmax(0, 1fr); gap: var(--ns-space-3); align-items: start; }
+.howto li::before {
+  content: counter(howto); width: 34px; height: 34px; display: grid; place-items: center;
+  border: 2px solid var(--ns-ink-600); border-bottom-width: 5px; border-radius: 9px;
+  font: 400 15px/1 var(--ns-font-display); color: var(--ns-gray-100);
+}
+/* "neu": outline, not a red fill (white on Netsession Rot is below 4.5:1 at label size) */
+.tag-new { border-color: var(--ns-red-500); color: var(--ns-white); }
+.finder tr.row-new > td:first-child { box-shadow: inset 3px 0 0 var(--ns-red-500); }
+/* a destination is two rows (facts + first bytes) that read as one */
+.finder tr.finder-main > td { border-bottom: 0; padding-bottom: var(--ns-space-1); }
+.finder tr.finder-sample > td { padding-top: 0; padding-bottom: var(--ns-space-1); }
+.finder tbody tr:hover { background: none; }
+.finder-srcs { min-width: 120px; }
+.finder-act { text-align: right; white-space: nowrap; }
+.finder-unknown { max-width: 760px; }
+.finder-foot { margin-top: var(--ns-space-3); }
+.hexdump { margin: 0 0 var(--ns-space-3); padding: var(--ns-space-3); white-space: pre-wrap; word-break: break-all; color: var(--ns-gray-300); background: var(--ns-ink-950); border: 1px solid var(--ns-ink-700); border-radius: var(--ns-radius-md); user-select: all; }
+
+@media (max-width: 560px) {
+  .actions > .btn, .actions > .btn-outline { flex: 1 1 auto; }
+  .picks { grid-template-columns: repeat(2, minmax(0, 1fr)); }
+}

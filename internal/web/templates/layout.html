@@ -20,6 +20,8 @@
     <nav class="nav" aria-label="Hauptnavigation">
       <a href="/"{{if eq .Nav "overview"}} aria-current="page"{{end}}>Übersicht</a>
       <a href="/spiele"{{if eq .Nav "games"}} aria-current="page"{{end}}>Spiele</a>
+      <a href="/spieler"{{if eq .Nav "players"}} aria-current="page"{{end}}>Spieler</a>
+      {{if hasRole .User "operator"}}<a href="/finder"{{if eq .Nav "finder"}} aria-current="page"{{end}}>Port-Finder</a>{{end}}
       {{if hasRole .User "admin"}}
       <a href="/netz"{{if eq .Nav "network"}} aria-current="page"{{end}}>Netz</a>
       <a href="/verlauf"{{if eq .Nav "history"}} aria-current="page"{{end}}>Verlauf</a>

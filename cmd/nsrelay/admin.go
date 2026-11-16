@@ -59,6 +59,10 @@ const adminUsage = `usage: nsrelay admin <command> [flags]
   audit                                                   audit log
   set-password <name> [-role admin|operator|viewer]       local account (emergency login); prints a new password once
   seed                                                    sync games.yaml into the database
+  finder-start [-vlans 1101,1102] [-src IP] [-seconds 300] port finder session (via socket)
+  finder                                                  port finder results
+  finder-stop                                             end the session early
+  finder-pcap <file>                                      capture of the last session (Wireshark)
 
 common flags: -db (env NSRELAY_DB), -socket (env NSRELAY_SOCKET), -user`
 
@@ -78,6 +82,9 @@ func runAdmin(args []string, stdout, stderr io.Writer) int {
 	note := fs.String("note", "", "apply: note for the revision")
 	dry := fs.Bool("dry-run", false, "apply: only compile and show warnings")
 	role := fs.String("role", "admin", "set-password: role of the account")
+	fVLANs := fs.String("vlans", "", "finder-start: VLAN IDs, comma separated (empty: all)")
+	fSrc := fs.String("src", "", "finder-start: only this sender")
+	fSecs := fs.Int("seconds", 300, "finder-start: session length (max 600)")
 	if err := fs.Parse(args); err != nil {
 		return 2
 	}
@@ -86,6 +93,15 @@ func runAdmin(args []string, stdout, stderr io.Writer) int {
 
 	if cmd == "status" {
 		return adminStatus(ctx, af, stdout, stderr)
+	}
+	if strings.HasPrefix(cmd, "finder") {
+		req := engineapi.FinderStart{Src: *fSrc, Seconds: *fSecs}
+		for _, x := range strings.Split(*fVLANs, ",") {
+			if id, err := strconv.Atoi(strings.TrimSpace(x)); err == nil {
+				req.VIDs = append(req.VIDs, id)
+			}
+		}
+		return adminFinder(ctx, af, cmd, req, fs.Arg(0), stdout, stderr)
 	}
 	st, err := store.Open(af.db)
 	if err != nil {

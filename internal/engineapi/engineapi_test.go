@@ -4,6 +4,7 @@ import (
 	"bufio"
 	"context"
 	"errors"
+	"io"
 	"net/http"
 	"path/filepath"
 	"strings"
@@ -13,7 +14,24 @@ import (
 	"github.com/Netsession2024/Netsession-Relay/internal/compile"
 )
 
-type fake struct{ applied string }
+type fake struct {
+	applied string
+	finder  FinderStart
+	stopped bool
+}
+
+func (f *fake) FinderStart(r FinderStart) error {
+	if r.Seconds > 600 {
+		return errors.New("duration must be between 1 s and 10 min")
+	}
+	f.finder = r
+	return nil
+}
+func (f *fake) FinderStop() { f.stopped = true }
+func (f *fake) Finder() FinderStatus {
+	return FinderStatus{Active: !f.stopped, Groups: []FinderGroup{{Kind: "broadcast", Port: 4711, Count: 3, Sample: []byte("hi")}}}
+}
+func (f *fake) FinderPcap(w io.Writer) error { _, err := w.Write([]byte("PCAP")); return err }
 
 func (f *fake) Status() Status {
 	return Status{Mode: "active", SnapshotHash: f.applied, Alarms: []Alarm{{Kind: "foreign_relay", Key: "1101", Count: 1}}}
@@ -23,6 +41,15 @@ func (f *fake) Validate(s *compile.Snapshot) error {
 		return errors.New("broken snapshot")
 	}
 	return nil
+}
+func (f *fake) Players() []Player {
+	return []Player{{Rule: "bc:23757", VID: 1101, Count: 3}}
+}
+func (f *fake) Ack(kind, by string) int {
+	if kind == "foreign_relay" {
+		return 2
+	}
+	return 0
 }
 func (f *fake) Apply(s *compile.Snapshot) error {
 	if err := f.Validate(s); err != nil {
@@ -57,6 +84,32 @@ func TestClientServerOverUnixSocket(t *testing.T) {
 	res, err = c.Validate(ctx, &compile.Snapshot{Mode: "broken"})
 	if err != nil || res.OK || !strings.Contains(res.Error, "broken") {
 		t.Fatalf("validate broken: %+v %v", res, err)
+	}
+
+	pl, err := c.Players(ctx)
+	if err != nil || len(pl) != 1 || pl[0].Rule != "bc:23757" {
+		t.Fatalf("players: %+v %v", pl, err)
+	}
+	if err := c.Ack(ctx, "foreign_relay", "op"); err != nil {
+		t.Fatalf("ack: %v", err)
+	}
+
+	if err := c.FinderStart(ctx, FinderStart{VIDs: []int{1101}, Src: "10.10.1.5", Seconds: 900}); err == nil || !strings.Contains(err.Error(), "10 min") {
+		t.Fatalf("finder start too long: %v", err)
+	}
+	if err := c.FinderStart(ctx, FinderStart{VIDs: []int{1101}, Src: "10.10.1.5", Seconds: 300}); err != nil || f.finder.Src != "10.10.1.5" {
+		t.Fatalf("finder start: %v %+v", err, f.finder)
+	}
+	fs, err := c.Finder(ctx)
+	if err != nil || !fs.Active || len(fs.Groups) != 1 || string(fs.Groups[0].Sample) != "hi" {
+		t.Fatalf("finder: %+v %v", fs, err)
+	}
+	var pc strings.Builder
+	if err := c.FinderPcap(ctx, &pc); err != nil || pc.String() != "PCAP" {
+		t.Fatalf("pcap: %q %v", pc.String(), err)
+	}
+	if err := c.FinderStop(ctx); err != nil || !f.stopped {
+		t.Fatalf("finder stop: %v", err)
 	}
 
 	// event stream delivers an alarm and a status event

@@ -1,5 +1,5 @@
 {{define "content"}}
-{{$l := .Live}}{{$csrf := .CSRF}}{{$admin := hasRole .User "admin"}}
+{{$l := .Live}}{{$csrf := .CSRF}}{{$admin := hasRole .User "admin"}}{{$op := hasRole .User "operator"}}
 <div class="pagehead">
   <div>
     <span class="bar"></span>
@@ -42,16 +42,24 @@
 
 <section class="section" id="alarme" aria-labelledby="alarme-h">
   <h2 id="alarme-h">Alarme</h2>
-  <ul class="alarms" id="alarms"{{if not $l.Alarms}} hidden{{end}}>
+  <ul class="alarms" id="alarms"{{if not $l.Alarms}} hidden{{end}}{{if $op}} data-can-ack{{end}}>
     {{range $l.Alarms}}
     <li class="alarm">{{icon "alert"}}<div>
       <p class="alarm-title"><b>{{.Title}}</b> <span class="alarm-meta">{{num .Count}}× · zuletzt {{ts .Last "time"}}</span></p>
       {{if .Hint}}<p>{{.Hint}}</p>{{end}}
       <p class="small muted"><span class="mono">{{.Where}}</span></p>
       <p class="small muted">{{.Detail}}</p>
+      {{if $op}}<form method="post" action="/alarme/{{.Kind}}/gesehen" class="ack-form"><input type="hidden" name="csrf" value="{{$csrf}}"><button class="btn-outline btn-sm" type="submit">{{icon "check"}}<span>Gesehen</span></button></form>{{end}}
     </div></li>
     {{end}}
   </ul>
+  <details class="fold seen" id="seen-box"{{if not $l.Seen}} hidden{{end}}>
+    <summary><span class="label">Gesehen, läuft noch (<span id="seen-count">{{len $l.Seen}}</span>)</span></summary>
+    <ul class="alarms alarms-seen" id="alarms-seen">
+      {{range $l.Seen}}<li class="alarm alarm-seen">{{icon "check"}}<div><p class="alarm-title"><b>{{.Title}}</b> <span class="alarm-meta">{{num .Count}}× · zuletzt {{ts .Last "time"}}{{if .By}} · gesehen von {{.By}}{{end}}</span></p><p class="small muted"><span class="mono">{{.Where}}</span></p></div></li>{{end}}
+    </ul>
+    <p class="small muted">Taucht ein gesehener Alarm nach mindestens einer Minute Ruhe wieder auf, ist er wieder offen.</p>
+  </details>
   <p class="quiet" id="alarms-empty"{{if $l.Alarms}} hidden{{end}}>{{icon "check"}}<span>Keine Alarme. Ruhige Halle.</span></p>
 </section>
 

@@ -53,4 +53,26 @@
     <p><a class="btn-outline" href="/verlauf"><span>Zum Verlauf</span>{{icon "arrow"}}</a></p>
   </div>
 </section>
+
+<section class="section" id="monitoring">
+  <h2>Monitoring (Zabbix)</h2>
+  <p class="muted">Zabbix und Prometheus holen die Werte des Relays ab. Beide brauchen das Token.</p>
+  {{with .Data.NewToken}}
+  <div class="notice notice-warn tokenbox" role="status">{{icon "alert"}}<div>
+    <p><b>Neues Token. Es wird nur jetzt angezeigt.</b> In Zabbix als Makro <span class="mono">{$NSRELAY.TOKEN}</span> eintragen. Das alte Token gilt ab sofort nicht mehr.</p>
+    <p class="tokenline"><code class="mono token" id="monitor-token">{{.}}</code><button class="btn-outline btn-sm" type="button" data-copy="monitor-token" data-copy-done="Token kopiert." hidden>Kopieren</button></p>
+  </div></div>
+  {{end}}
+  <dl class="facts">
+    <dt>Token</dt><dd>{{if .Data.MonitorSet}}<span class="tag tag-ok">{{icon "check"}}eingerichtet</span>{{else}}<span class="tag">noch keins</span> <span class="small muted">Die Endpunkte sind aus.</span>{{end}}</dd>
+    <dt>Zabbix</dt><dd class="mono">/api/v1/monitoring</dd>
+    <dt>Prometheus</dt><dd class="mono">/metrics</dd>
+    <dt>Header</dt><dd class="mono">Authorization: Bearer &lt;Token&gt;</dd>
+    <dt>Vorlage</dt><dd>im Repo unter <span class="mono">deploy/zabbix/</span></dd>
+  </dl>
+  <form method="post" action="/system/monitoring-token" class="actions"{{if .Data.MonitorSet}} data-confirm="Das bisherige Token gilt sofort nicht mehr. Zabbix bekommt keine Werte, bis das neue Token eingetragen ist." data-confirm-title="Neues Token erzeugen?" data-confirm-ok="Erzeugen"{{end}}>
+    <input type="hidden" name="csrf" value="{{$csrf}}">
+    <button class="btn-outline" type="submit">{{if .Data.MonitorSet}}Neues Token erzeugen{{else}}Token erzeugen{{end}}</button>
+  </form>
+</section>
 {{end}}

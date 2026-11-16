@@ -27,7 +27,9 @@ type Guard struct {
 	// beacon before it ever relays (default 1.5 s, beacons every second).
 	Holdoff time.Duration
 
-	Alarms Alarms
+	Alarms  Alarms
+	Players Players // who searches/hosts which game
+	Finder  Finder  // port finder sessions (phase 8)
 
 	dedup   [dedupShards]dedupShard
 	buckets [bucketShards]bucketShard
@@ -324,15 +326,20 @@ const (
 	AlarmDualActive   = "dual_active"
 )
 
-// Alarm is an aggregated alarm (same kind + key).
+// Alarm is an aggregated alarm (same kind + key). An acknowledged alarm stays acknowledged while it keeps
+// occurring; after a quiet gap of ackResetAfter it counts as a new incident and is open again.
 type Alarm struct {
-	Kind   string    `json:"kind"`
-	Key    string    `json:"key"`
-	Detail string    `json:"detail"`
-	First  time.Time `json:"first"`
-	Last   time.Time `json:"last"`
-	Count  uint64    `json:"count"`
+	Kind    string    `json:"kind"`
+	Key     string    `json:"key"`
+	Detail  string    `json:"detail"`
+	First   time.Time `json:"first"`
+	Last    time.Time `json:"last"`
+	Count   uint64    `json:"count"`
+	AckedAt time.Time `json:"acked_at"`
+	AckedBy string    `json:"acked_by,omitempty"`
 }
+
+const ackResetAfter = 60 * time.Second
 
 // Alarms aggregates alarms in memory; the web part persists them (phase 4/7).
 type Alarms struct {
@@ -349,12 +356,29 @@ func (a *Alarms) Raise(kind, key string, now time.Time, format string, args ...a
 	}
 	id := kind + "|" + key
 	if x, ok := a.m[id]; ok {
+		if !x.AckedAt.IsZero() && now.Sub(x.Last) > ackResetAfter {
+			x.AckedAt, x.AckedBy = time.Time{}, "" // quiet gap: a new incident
+		}
 		x.Last = now
 		x.Count++
 		return false
 	}
 	a.m[id] = &Alarm{Kind: kind, Key: key, Detail: sprintf(format, args...), First: now, Last: now, Count: 1}
 	return true
+}
+
+// Ack acknowledges all alarms of a kind and returns how many were affected.
+func (a *Alarms) Ack(kind, by string, now time.Time) int {
+	a.mu.Lock()
+	defer a.mu.Unlock()
+	n := 0
+	for _, x := range a.m {
+		if x.Kind == kind {
+			x.AckedAt, x.AckedBy = now, by
+			n++
+		}
+	}
+	return n
 }
 
 // List returns all alarms, newest first.

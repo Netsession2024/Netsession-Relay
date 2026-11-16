@@ -101,6 +101,8 @@ type alarmGroup struct {
 	Count  uint64    `json:"count"`
 	Last   time.Time `json:"last"`
 	Detail string    `json:"detail"`
+	Acked  bool      `json:"acked"`
+	By     string    `json:"acked_by,omitempty"`
 }
 
 type liveView struct {
@@ -120,7 +122,8 @@ type liveView struct {
 	GamesOn    int                   `json:"games_on"`
 	GamesTotal int                   `json:"games_total"`
 	Enabled    []string              `json:"enabled"` // ids of games switched on
-	Alarms     []alarmGroup          `json:"alarms"`
+	Alarms     []alarmGroup          `json:"alarms"`  // open
+	Seen       []alarmGroup          `json:"seen"`    // acknowledged, still occurring
 	VLANs      []vlanView            `json:"vlans"`
 	Rules      []engineapi.RuleStat  `json:"rules"`
 	Busy       []busyRow             `json:"busy"`
@@ -162,6 +165,14 @@ func groupAlarms(alarms []engineapi.Alarm, mode string) []alarmGroup {
 			}
 			byKind[a.Kind] = g
 			order = append(order, a.Kind)
+		}
+		if len(g.Keys) == 0 {
+			g.Acked, g.By = true, a.AckedBy
+		}
+		if a.AckedAt.IsZero() {
+			g.Acked = false // one open alarm keeps the whole group open
+		} else if g.By == "" {
+			g.By = a.AckedBy
 		}
 		g.Keys = append(g.Keys, a.Key)
 		g.Count += a.Count
@@ -245,7 +256,13 @@ func (s *Server) liveNow(ctx context.Context) *liveView {
 		Rules: st.RuleStats, Unknown: st.TopUnknown, Reasons: []reasonView{},
 		ruleRX: map[string]uint64{}, games: map[string]store.GameRow{}}
 	v.State = stateOf(st, v.EngineOK)
-	v.Alarms = groupAlarms(st.Alarms, st.Mode)
+	for _, g := range groupAlarms(st.Alarms, st.Mode) {
+		if g.Acked {
+			v.Seen = append(v.Seen, g)
+		} else {
+			v.Alarms = append(v.Alarms, g)
+		}
+	}
 	if v.Rules == nil {
 		v.Rules = []engineapi.RuleStat{}
 	}

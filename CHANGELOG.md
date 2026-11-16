@@ -3,6 +3,31 @@
 All notable changes to the public Netsession Relay. Versions follow [Semantic Versioning](https://semver.org/);
 before 1.0 minor versions may change behaviour.
 
+## [0.2.0] – 2026-11-16
+
+### Web UI
+- **Players page** ("Wer spielt was"): who searched for or hosted which game in the last 15 minutes, with network,
+  address and role (hosts / searches / active), refreshed every 5 seconds.
+- **Acknowledge alarms** ("Gesehen", operator and up): acknowledged alarms move to a "seen, still running" list
+  and stop counting; after 60 quiet seconds a new incident opens again. Audited.
+
+- **Port finder** (operator): sniffer sessions per VLAN and sender (up to 10 minutes) show every broadcast and
+  multicast destination with count, interval, size, senders, first bytes and "new since start"; known noise can be
+  hidden; unknown ports become a game with one click (`origin: sniffer`, `confidence: low`, optionally switched on);
+  capture download as `.pcap`. Also `nsrelay admin finder-start | finder | finder-stop | finder-pcap`.
+- "Unknown ports since engine start" names games of the database that use the port but are switched off.
+
+### Monitoring
+- `GET /api/v1/monitoring` (JSON for Zabbix) and `GET /metrics` (Prometheus text format), protected by a bearer
+  token that an admin creates on the System page (shown once, stored as SHA-256).
+- New alarm `vlan_silent`: no broadcast on a VLAN for 10 minutes during an active event in mode `active`.
+  The engine status now has `last_in` per VLAN.
+- Zabbix template `deploy/zabbix/template_nsrelay.yaml` (items, VLAN discovery, triggers for every alarm) and its
+  generator `tools/gen_zabbix_template.py`. A test checks every JSONPath of the template against the report.
+
+### Project
+- GitHub Actions updated (checkout, setup-go, Docker actions).
+
 ## [0.1.0] – 2026-11-16
 
 First public preview. Running at Netsession in observe mode next to the previous OPNsense relays.
@@ -32,4 +57,5 @@ First public preview. Running at Netsession in observe mode next to the previous
 - `nsrelay import opnsense` report for migrating from OPNsense `udpbroadcastrelay`.
 - Network-namespace lab with 30 end-to-end cases, Docker image, host hardening script, systemd units.
 
+[0.2.0]: https://github.com/Netsession2024/Netsession-Relay/releases/tag/v0.2.0
 [0.1.0]: https://github.com/Netsession2024/Netsession-Relay/releases/tag/v0.1.0
