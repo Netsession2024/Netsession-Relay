@@ -3,6 +3,32 @@
 All notable changes to the public Netsession Relay. Versions follow [Semantic Versioning](https://semver.org/);
 before 1.0 minor versions may change behaviour.
 
+## [0.3.0] – 2026-11-17
+
+### Monitoring
+- **Several syslog targets** (UDP/TCP/TLS, RFC 5424/3164), **OpenTelemetry** export (OTLP gRPC/HTTP, metrics and
+  logs, without the OTel SDK), **SNMP traps/informs** (v2c/v3) and a read-only **SNMP agent** (v3/v2c) with
+  `NETSESSION-RELAY-MIB`. Alarms are sent when they open and when they clear, plus `engine_down`.
+- New page System → Monitoring; Zabbix template item and trigger for failing targets; a second Zabbix template
+  for SNMP (`deploy/zabbix/template_nsrelay_snmp.yaml`).
+
+### Web UI
+- **Finer, quieter design**: smaller type and headings, fewer uppercase labels, buttons without glow.
+- **Service hosts** (admin): mark addresses that query games without playing (e.g. a Discord game server
+  notifier); the players page lists them separately. An address seen in 3 or more games is suggested.
+- **Redesign** after a review of the rendered pages: no coloured edge stripes, alarms and network tiles link to each
+  other, games list with views (on / off / all) and groups, players grouped by game, tables become cards on phones.
+- **Games in the UI** (operator): create, edit (several discovery rows) and delete own games; the port finder uses
+  the same form. Edited seed games are kept on seed sync.
+- **Flow profiles in the UI** (admin): edit the matrix, create, rename, delete, set default, pick a profile per game.
+- **Emergency stop release** by operators: restores the mode that was set before the stop.
+- **Verifications** per game ("tested at event X": works / partial / fails) and **YAML exports** in the seed format
+  (one game, all checked or changed games) plus the configuration (`nsrelay admin export|import`).
+- **Syslog** (UDP, RFC 5424): audit entries and newly opened alarms.
+- **Networks in the UI** (admin): add, edit and delete VLANs on the Netz page. The whole configuration is
+  compiled before anything is stored (overlaps, relay IP inside the network), then applied right away; the engine
+  creates or removes the VLAN interface.
+
 ## [0.2.0] – 2026-11-16
 
 ### Web UI

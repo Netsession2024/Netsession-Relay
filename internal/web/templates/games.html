@@ -1,6 +1,8 @@
+{{define "mark"}}{{if .Checked}}<span class="flag" data-tone="{{resultTone .Checked}}" title="Bei einem Event getestet">{{icon (resultIcon .Checked)}}<span>{{resultBadge .Checked}}</span></span>{{else if .Unsure}}<span class="flag" data-tone="warn" title="Ports nicht gemessen, vor Ort prüfen">{{icon "alert"}}<span>unsicher</span></span>{{end}}{{end}}
+
 {{define "row"}}
-<li class="grow{{if .G.Pinned}} grow-pin{{end}}" data-id="{{.G.ID}}" data-on="{{if .G.Enabled}}1{{else}}0{{end}}" data-unsure="{{if .G.Unsure}}1{{else}}0{{end}}"
-    data-search="{{.G.ID}} {{.G.Name}} {{join .G.Aliases " "}} {{.G.Ports}}" data-rules="{{.G.RuleIDs}}">
+<li class="grow" data-id="{{.G.ID}}" data-on="{{if .G.Enabled}}1{{else}}0{{end}}"{{if not (viewShows .View .G.Enabled)}} hidden{{end}}
+    data-search="{{.G.ID}} {{.G.Name}} {{join .G.Aliases " "}} {{.G.Ports}}{{if .G.Checked}} {{resultBadge .G.Checked}}{{else if .G.Unsure}} unsicher{{end}}" data-rules="{{.G.RuleIDs}}">
   {{if .CanSwitch}}
   <form method="post" action="/spiele/{{.G.ID}}" class="toggle-form">
     <input type="hidden" name="csrf" value="{{.CSRF}}">
@@ -11,61 +13,88 @@
   {{else}}
   <span class="onoff" data-onoff>{{if .G.Enabled}}An{{else}}Aus{{end}}</span>
   {{end}}
-  <a class="grow-main" href="/spiele/{{.G.ID}}">
+  <a class="grow-main" href="/spiele/{{.G.ID}}" title="{{.G.Name}}">
     <span class="grow-name">{{.G.Name}}</span>
-    {{if .G.Unsure}}<span class="tag tag-warn">{{icon "alert"}}Unsicher</span>{{end}}
-    <span class="grow-ports mono">{{if .G.Ports}}UDP {{.G.Ports}}{{else}}Ports unbekannt{{end}}</span>
+    {{template "mark" .G}}
   </a>
-  <span class="grow-live" title="Suchanfragen seit dem Start der Engine"><i class="dot" aria-hidden="true"></i><span class="mono" data-f="rx">{{num .G.RX}}</span><span class="sr"> Pakete empfangen</span></span>
-  <a class="grow-go" href="/spiele/{{.G.ID}}" tabindex="-1" aria-hidden="true">{{icon "chevron"}}</a>
+  <span class="grow-ports mono" title="UDP {{.G.Ports}}">{{.G.Ports}}</span>
+  <span class="grow-live"><i class="dot" aria-hidden="true"></i><span class="mono" data-f="rx">{{num .G.RX}}</span><span class="sr"> Pakete empfangen</span></span>
+  <span class="grow-go" aria-hidden="true">{{icon "chevron"}}</span>
 </li>
 {{end}}
 
 {{define "content"}}
 {{$d := .Data}}{{$csrf := .CSRF}}
-<span class="bar"></span>
-<h1>LAN-<em>Spiele</em></h1>
-<p class="lead"><b data-live="games_on">{{$d.On}}</b> von {{$d.Total}} an. Schalten wirkt sofort, laufende Partien merken nichts.</p>
+<div class="pagehead">
+  <div>
+    <span class="bar"></span>
+    <h1>LAN-<em>Spiele</em></h1>
+    <p class="lead"><b data-live="games_on">{{$d.On}}</b> von {{$d.Total}} an. Schalten wirkt sofort, laufende Partien merken nichts.</p>
+  </div>
+  {{if $d.CanSwitch}}<div class="pagehead-act"><a class="btn" href="/spiele/neu">{{icon "plus"}}Spiel anlegen</a></div>{{end}}
+</div>
 
 <div class="toolbar" id="game-toolbar">
   <label class="search">{{icon "search"}}<span class="sr">Spiel oder Port suchen</span><input type="search" id="game-search" placeholder="Spiel oder Port, z. B. 23757" autocomplete="off" spellcheck="false"><kbd aria-hidden="true">/</kbd></label>
-  <div class="chips" role="group" aria-label="Filter">
-    <button type="button" class="chip" data-filter="all" aria-pressed="true">Alle <span class="n" id="n-all">{{$d.Total}}</span></button>
-    <button type="button" class="chip" data-filter="an" aria-pressed="false">An <span class="n" id="n-on">{{$d.On}}</span></button>
-    <button type="button" class="chip" data-filter="aus" aria-pressed="false">Aus <span class="n" id="n-off">{{$d.Off}}</span></button>
-    <button type="button" class="chip" data-filter="unsicher" aria-pressed="false">Unsicher <span class="n">{{$d.Unsure}}</span></button>
+  <div class="seg seg-wide" role="group" aria-label="Anzeigen" id="game-view" data-view="{{$d.View}}">
+    <a class="seg-item" href="/spiele" data-view="an"{{if eq $d.View "an"}} aria-current="true"{{end}}>An <span class="n" id="n-on">{{$d.On}}</span></a>
+    <a class="seg-item" href="/spiele?zeige=aus" data-view="aus"{{if eq $d.View "aus"}} aria-current="true"{{end}}>Aus <span class="n" id="n-off">{{$d.Off}}</span></a>
+    <a class="seg-item" href="/spiele?zeige=alle" data-view="alle"{{if eq $d.View "alle"}} aria-current="true"{{end}}>Alle <span class="n" id="n-all">{{$d.Total}}</span></a>
   </div>
 </div>
 <p class="sr" id="game-count" role="status"></p>
 
 <div id="games">
-  {{if $d.FlatOut}}
+  {{range $d.Groups}}
   <section class="gsec" data-gsec>
-    <h2>FlatOut <span class="tag">Priorität</span></h2>
-    <ul class="glist">{{range $d.FlatOut}}{{template "row" (dict "G" . "CSRF" $csrf "CanSwitch" $d.CanSwitch)}}{{end}}</ul>
+    <h2>{{.Title}} <span class="count" data-count>{{len .Rows}}</span></h2>
+    {{if .Sub}}<p class="gsec-sub">{{.Sub}}</p>{{end}}
+    <div class="glist-head" aria-hidden="true"><span>Weiterleiten</span><span>Spiel</span><span>UDP-Ports</span><span>Empfangen</span></div>
+    <ul class="glist">{{range .Rows}}{{template "row" (dict "G" . "CSRF" $csrf "CanSwitch" $d.CanSwitch "View" $d.View)}}{{end}}</ul>
   </section>
   {{end}}
-  <section class="gsec" data-gsec>
-    <h2>Alle Spiele</h2>
-    <div class="glist-head" aria-hidden="true"><span>Im Relay</span><span>Spiel und Ports der LAN-Suche</span><span>Empfangen</span></div>
-    <ul class="glist">{{range $d.Games}}{{template "row" (dict "G" . "CSRF" $csrf "CanSwitch" $d.CanSwitch)}}{{end}}</ul>
-  </section>
-  <p class="quiet" id="game-empty" hidden>{{icon "search"}}<span>Nichts gefunden. Probier einen Port, z. B. <span class="mono">23757</span>, oder nimm den Filter raus.</span></p>
+  <p class="quiet" id="game-empty" hidden>{{icon "search"}}<span>Nichts gefunden. Probier einen Port, z. B. <span class="mono">23757</span>.{{if $d.CanSwitch}} Gibt es das Spiel noch nicht? <a href="/spiele/neu">Spiel anlegen</a>{{end}}</span></p>
+  <p class="quiet" id="game-none"{{if or $d.Groups (ne $d.View "an")}} hidden{{end}}>{{icon "info"}}<span>Kein Spiel an. Schalte eins ein: <a href="/spiele?zeige=aus">ausgeschaltete Spiele</a>.</span></p>
 
-  {{if $d.NoLAN}}
-  <details class="fold gsec" id="nolan" data-gsec>
-    <summary><span class="fold-body"><span class="fold-title">Ohne LAN-Broadcast <span class="tag">{{len $d.NoLAN}}</span></span><span class="small muted">Nichts zu schalten: Diese Spiele suchen nicht per Broadcast.</span></span></summary>
-    <ul class="glist glist-plain">
-      {{range $d.NoLAN}}
-      <li class="grow" data-id="{{.ID}}" data-nolan="1" data-search="{{.ID}} {{.Name}} {{join .Aliases " "}}">
-        <span class="onoff onoff-na">Kein Relay</span>
-        <a class="grow-main" href="/spiele/{{.ID}}"><span class="grow-name">{{.Name}}</span></a>
+  {{if $d.NoPorts}}
+  <details class="fold gsec" data-gsec data-off-only{{if eq $d.View "an"}} hidden{{end}}>
+    <summary><span class="fold-body"><span class="fold-title">Ports unbekannt <span class="count">{{len $d.NoPorts}}</span></span><span class="small muted">Nichts zu schalten, bis die Ports gemessen sind.</span></span></summary>
+    <ul class="glist">
+      {{range $d.NoPorts}}
+      <li class="grow" data-id="{{.ID}}" data-on="0" data-noports="1" data-search="{{.ID}} {{.Name}} {{join .Aliases " "}} unbekannt">
+        {{if $d.CanSwitch}}<a class="btn-link" href="/finder">Ports finden</a>{{else}}<span class="onoff onoff-na">–</span>{{end}}
+        <a class="grow-main" href="/spiele/{{.ID}}" title="{{.Name}}"><span class="grow-name">{{.Name}}</span>{{if .Checked}}{{template "mark" .}}{{end}}</a>
+        <span class="grow-ports">Ports unbekannt</span>
         <span></span>
-        <a class="grow-go" href="/spiele/{{.ID}}" tabindex="-1" aria-hidden="true">{{icon "chevron"}}</a>
+        <span class="grow-go" aria-hidden="true">{{icon "chevron"}}</span>
       </li>
       {{end}}
     </ul>
   </details>
   {{end}}
+
+  {{if $d.NoLAN}}
+  <details class="fold gsec" id="nolan" data-gsec data-off-only{{if eq $d.View "an"}} hidden{{end}}>
+    <summary><span class="fold-body"><span class="fold-title">Ohne LAN-Broadcast <span class="count">{{len $d.NoLAN}}</span></span><span class="small muted">Nichts zu schalten: Diese Spiele suchen nicht per Broadcast.</span></span></summary>
+    <ul class="glist">
+      {{range $d.NoLAN}}
+      <li class="grow" data-id="{{.ID}}" data-nolan="1" data-search="{{.ID}} {{.Name}} {{join .Aliases " "}}">
+        <span class="onoff onoff-na">Kein Relay</span>
+        <a class="grow-main" href="/spiele/{{.ID}}" title="{{.Name}}"><span class="grow-name">{{.Name}}</span></a>
+        <span></span>
+        <span></span>
+        <span class="grow-go" aria-hidden="true">{{icon "chevron"}}</span>
+      </li>
+      {{end}}
+    </ul>
+  </details>
+  {{end}}
+</div>
+
+<div class="section panel">
+  <div class="actrow">
+    <p><b>Nach dem Event:</b> getestete und selbst angelegte Spiele zurück in die Spiele-Datenbank (<span class="mono">games.yaml</span>). {{if $d.Checked}}{{$d.Checked}} {{if eq $d.Checked 1}}Spiel{{else}}Spiele{{end}} mit Test.{{else}}Noch kein Spiel getestet.{{end}}</p>
+    <a class="btn-outline" href="/spiele/export.yaml">{{icon "download"}}<span>Geprüfte Spiele als YAML</span></a>
+  </div>
 </div>
 {{end}}

@@ -3,24 +3,33 @@
 <span class="bar"></span>
 <h1>Relay-<em>System</em></h1>
 
-<section class="section section-first grid2">
-  <div>
-    <h2>Betriebsart</h2>
-    <p class="nowline"><span class="label">Läuft gerade</span> <span class="state" data-tone="{{$l.State.Tone}}" data-tone-live><span data-icon-live>{{icon $l.State.Icon}}</span><span data-live="state.label">{{$l.State.Label}}</span></span></p>
+<div class="section-first grid2">
+  <section class="panel" aria-labelledby="mode-h">
+    <div class="panel-head">
+      <h2 id="mode-h">Betriebsart</h2>
+      <span class="state state-box" data-tone="{{$l.State.Tone}}" data-tone-live><span data-icon-live>{{icon $l.State.Icon}}</span><span class="sr">Läuft gerade: </span><span data-live="state.label">{{$l.State.Label}}</span></span>
+    </div>
+    {{if .Data.Resume}}
+    <div class="note" data-tone="warn">{{icon "pause"}}<div class="note-body">
+      <p><b>Not-Aus.</b> Das Relay ist pausiert. Vorher lief es im Modus {{.Data.ResumeName}}.</p>
+      <p><a class="btn-outline btn-resume" href="/notaus">{{icon "power"}}<span>Relay wieder einschalten</span></a></p>
+    </div></div>
+    {{end}}
     <form method="post" action="/system/mode" class="form" data-confirm="Die Betriebsart gilt sofort für alle Netze." data-confirm-title="Betriebsart wechseln?" data-confirm-ok="Wechseln">
       <input type="hidden" name="csrf" value="{{$csrf}}">
       <fieldset class="radios">
         <legend class="sr">Betriebsart wählen</legend>
-        <label class="radio"><input type="radio" name="mode" value="active"{{if eq .Data.Mode "active"}} checked{{end}}><span><b>Aktiv</b>{{if eq .Data.Mode "active"}} <span class="tag">eingestellt</span>{{end}}<br><span class="small muted">Leitet weiter. Nur wenn keine OPNsense-Box mehr dieselben Ports relayt.</span></span></label>
-        <label class="radio"><input type="radio" name="mode" value="observe"{{if eq .Data.Mode "observe"}} checked{{end}}><span><b>Beobachten</b>{{if eq .Data.Mode "observe"}} <span class="tag">eingestellt</span>{{end}}<br><span class="small muted">Zählt mit, sendet nichts. Für den Parallelbetrieb mit den alten Boxen.</span></span></label>
-        <label class="radio"><input type="radio" name="mode" value="paused"{{if eq .Data.Mode "paused"}} checked{{end}}><span><b>Pausiert</b>{{if eq .Data.Mode "paused"}} <span class="tag">eingestellt</span>{{end}}<br><span class="small muted">Wie Not-Aus. Nichts wird weitergeleitet.</span></span></label>
+        <label class="radio"><input type="radio" name="mode" value="active"{{if eq .Data.Mode "active"}} checked{{end}}><span><b>Aktiv</b><br><span class="small muted">Leitet weiter. Nur wenn keine OPNsense-Box mehr dieselben Ports relayt.</span></span></label>
+        <label class="radio"><input type="radio" name="mode" value="observe"{{if eq .Data.Mode "observe"}} checked{{end}}><span><b>Beobachten</b><br><span class="small muted">Zählt mit, sendet nichts. Für den Parallelbetrieb mit den alten Boxen.</span></span></label>
+        <label class="radio"><input type="radio" name="mode" value="paused"{{if eq .Data.Mode "paused"}} checked{{end}}><span><b>Pausiert</b><br><span class="small muted">Wie Not-Aus. Nichts wird weitergeleitet.</span></span></label>
       </fieldset>
-      <button class="btn" type="submit">Betriebsart wechseln</button>
+      <div class="actions"><button class="btn" type="submit">Betriebsart wechseln</button><span class="small muted">Eingestellt: {{modeName .Data.Mode}}</span></div>
     </form>
-  </div>
-  <div>
-    <h2>Engine</h2>
-    {{if .EngErr}}<p class="notice notice-danger">{{icon "alert"}}<span>Die Engine antwortet nicht. Prüfe den Container <span class="mono">nsrelay-engine-1</span>.</span></p>{{else}}
+  </section>
+
+  <section class="panel" aria-labelledby="engine-h">
+    <h2 id="engine-h">Engine</h2>
+    {{if .EngErr}}<p class="note" data-tone="danger">{{icon "alert"}}<span class="note-body">Die Engine antwortet nicht. Prüfe den Container <span class="mono">nsrelay-engine-1</span>.</span></p>{{else}}
     <dl class="facts">
       <dt>Version</dt><dd class="mono">{{$e.Version}}</dd>
       <dt>Läuft seit</dt><dd>{{ts $e.Started "datetime"}}</dd>
@@ -28,7 +37,7 @@
       <dt>Empfangen</dt><dd class="mono" data-live="rx">{{num $e.RX}}</dd>
       <dt>Gesendet</dt><dd class="mono" data-live="sent">{{num $e.Sent}}</dd>
     </dl>
-    {{range $e.SelfTest}}<p class="notice notice-warn">{{icon "alert"}}<span>{{.}}</span></p>{{end}}
+    {{range $e.SelfTest}}<p class="note" data-tone="warn">{{icon "alert"}}<span class="note-body">{{.}}</span></p>{{end}}
     {{end}}
     <h3>Nicht weitergeleitet, nach Grund</h3>
     <div class="tablewrap"><table>
@@ -38,41 +47,61 @@
         {{else}}<tr><td colspan="2" class="muted">Bisher wurde nichts verworfen.</td></tr>{{end}}
       </tbody>
     </table></div>
-  </div>
-</section>
+  </section>
+</div>
 
-<section class="section grid2">
-  <div>
-    <h2>Sicherung</h2>
-    <p class="muted">Die ganze Datenbank als Datei: Spiele, Netze, Revisionen, Protokoll, Konten.</p>
-    <p><a class="btn-outline" href="/system/backup">{{icon "download"}}<span>Backup herunterladen</span></a></p>
-  </div>
-  <div>
-    <h2>Änderungen</h2>
-    <p class="muted">Wer hat was geändert, und zurück auf einen älteren Stand.</p>
-    <p><a class="btn-outline" href="/verlauf"><span>Zum Verlauf</span>{{icon "arrow"}}</a></p>
-  </div>
-</section>
+<div class="section grid2">
+  <section class="panel" aria-labelledby="save-h">
+    <h2 id="save-h">Konfiguration und Sicherung</h2>
+    <div class="actrow">
+      <p><b>Backup.</b> Die ganze Datenbank: Spiele, Netze, Stände, Protokoll, Konten.</p>
+      <a class="btn-outline" href="/system/backup">{{icon "download"}}<span>Backup laden</span></a>
+    </div>
+    <div class="actrow">
+      <p><b>Konfiguration als YAML.</b> Netze, Profile und die Spiele des Events, lesbar. Zurück mit <span class="mono">nsrelay admin import</span>.</p>
+      <a class="btn-outline" href="/system/konfiguration.yaml">{{icon "download"}}<span>YAML laden</span></a>
+    </div>
+    <div class="actrow">
+      <p><b>Verlauf.</b> Wer hat was geändert, und zurück auf einen älteren Stand.</p>
+      <a class="btn-outline" href="/verlauf"><span>Zum Verlauf</span>{{icon "arrow"}}</a>
+    </div>
+  </section>
 
-<section class="section" id="monitoring">
-  <h2>Monitoring (Zabbix)</h2>
-  <p class="muted">Zabbix und Prometheus holen die Werte des Relays ab. Beide brauchen das Token.</p>
-  {{with .Data.NewToken}}
-  <div class="notice notice-warn tokenbox" role="status">{{icon "alert"}}<div>
-    <p><b>Neues Token. Es wird nur jetzt angezeigt.</b> In Zabbix als Makro <span class="mono">{$NSRELAY.TOKEN}</span> eintragen. Das alte Token gilt ab sofort nicht mehr.</p>
-    <p class="tokenline"><code class="mono token" id="monitor-token">{{.}}</code><button class="btn-outline btn-sm" type="button" data-copy="monitor-token" data-copy-done="Token kopiert." hidden>Kopieren</button></p>
-  </div></div>
-  {{end}}
-  <dl class="facts">
-    <dt>Token</dt><dd>{{if .Data.MonitorSet}}<span class="tag tag-ok">{{icon "check"}}eingerichtet</span>{{else}}<span class="tag">noch keins</span> <span class="small muted">Die Endpunkte sind aus.</span>{{end}}</dd>
-    <dt>Zabbix</dt><dd class="mono">/api/v1/monitoring</dd>
-    <dt>Prometheus</dt><dd class="mono">/metrics</dd>
-    <dt>Header</dt><dd class="mono">Authorization: Bearer &lt;Token&gt;</dd>
-    <dt>Vorlage</dt><dd>im Repo unter <span class="mono">deploy/zabbix/</span></dd>
-  </dl>
-  <form method="post" action="/system/monitoring-token" class="actions"{{if .Data.MonitorSet}} data-confirm="Das bisherige Token gilt sofort nicht mehr. Zabbix bekommt keine Werte, bis das neue Token eingetragen ist." data-confirm-title="Neues Token erzeugen?" data-confirm-ok="Erzeugen"{{end}}>
-    <input type="hidden" name="csrf" value="{{$csrf}}">
-    <button class="btn-outline" type="submit">{{if .Data.MonitorSet}}Neues Token erzeugen{{else}}Token erzeugen{{end}}</button>
-  </form>
-</section>
+  <section class="panel" aria-labelledby="msg-h">
+    <h2 id="msg-h">Monitoring</h2>
+    <p class="small muted">Zabbix und Prometheus holen Werte ab, Syslog und OpenTelemetry bekommen Alarme und Änderungen.</p>
+    <dl class="facts">
+      <dt>Token</dt><dd>{{if .Data.MonitorSet}}<span class="flag" data-tone="ok">{{icon "check"}}eingerichtet</span>{{else}}<span class="flag">noch keiner</span>{{end}}</dd>
+      <dt>Ziele</dt><dd>{{.Data.Targets}}{{if .Data.TargetsFailing}} · <span class="flag" data-tone="danger">{{icon "alert"}}{{.Data.TargetsFailing}} mit Fehler</span>{{end}}</dd>
+    </dl>
+    <div class="actions"><a class="btn-outline" href="/system/monitoring"><span>Monitoring einrichten</span>{{icon "arrow"}}</a></div>
+  </section>
+
+  <section class="panel panel-wide" aria-labelledby="dienste">
+    <h2 id="dienste">Dienste im Netz</h2>
+    <p class="small muted">Geräte, die Spiele abfragen, ohne zu spielen, etwa ein Discord-Gameserver-Notifier. Auf der Seite Spieler stehen sie in einem eigenen Block und zählen nicht mit. Weitergeleitet wird ihr Verkehr ganz normal.</p>
+    {{if .Data.Services}}
+    <ul class="plist">
+      {{range .Data.Services}}
+      <li class="prow">
+        <span><b>{{.Name}}</b>{{with .Note}}<br><span class="small muted">{{.}}</span>{{end}}</span>
+        <span class="mono prow-ip">{{.IP}}</span>
+        <span class="small muted">{{.User}}</span>
+        <form method="post" action="/system/dienste/{{.IP}}/loeschen" data-confirm="{{.Name}} zählt dann wieder als Spieler:in." data-confirm-title="Markierung entfernen?" data-confirm-ok="Entfernen"><input type="hidden" name="csrf" value="{{$csrf}}"><button class="btn-link" type="submit">Entfernen</button></form>
+      </li>
+      {{end}}
+    </ul>
+    {{else}}<p class="quiet">{{icon "info"}}<span>Noch kein Dienst markiert. Am schnellsten geht es auf der Seite <a href="/spieler">Spieler</a> über „Dienst?“ (erscheint, wenn eine Adresse mindestens 3 Spiele abfragt).</span></p>{{end}}
+    <form method="post" action="/system/dienste" class="form">
+      <input type="hidden" name="csrf" value="{{$csrf}}">
+      <div class="field"><label class="label" for="svc-ip">Adresse</label>
+        <input id="svc-ip" name="ip" required value="{{.Data.ServiceIP}}" class="mono" inputmode="decimal" placeholder="10.10.254.99" autocomplete="off" spellcheck="false"></div>
+      <div class="field"><label class="label" for="svc-name">Name</label>
+        <input id="svc-name" name="name" required maxlength="60" placeholder="Discord-Notifier" autocomplete="off"{{if .Data.ServiceIP}} autofocus{{end}}></div>
+      <div class="field"><label class="label" for="svc-note">Notiz (optional)</label>
+        <input id="svc-note" name="note" placeholder="VM, wer betreut sie" autocomplete="off"></div>
+      <div class="actions"><button class="btn-outline" type="submit">Als Dienst markieren</button></div>
+    </form>
+  </section>
+</div>
 {{end}}

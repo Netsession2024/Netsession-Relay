@@ -15,4 +15,7 @@
   <symbol id="i-chevron" viewBox="0 0 24 24"><path d="m9 5.500 6.500 6.500-6.500 6.500"/></symbol>
   <symbol id="i-back" viewBox="0 0 24 24"><path d="M20 12H5"/><path d="m11 6-6 6 6 6"/></symbol>
   <symbol id="i-close" viewBox="0 0 24 24"><path d="m6 6 12 12"/><path d="M18 6 6 18"/></symbol>
+  <symbol id="i-plus" viewBox="0 0 24 24"><path d="M12 5v14"/><path d="M5 12h14"/></symbol>
+  <symbol id="i-edit" viewBox="0 0 24 24"><path d="M4 20h4l10.500-10.500-4-4L4 16v4Z"/><path d="m13 7 4 4"/></symbol>
+  <symbol id="i-trash" viewBox="0 0 24 24"><path d="M4.500 7h15"/><path d="M9.500 7V4.500h5V7"/><path d="M6.500 7l1 12.500h9l1-12.500"/></symbol>
 </svg>

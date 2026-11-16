@@ -24,6 +24,15 @@ const ActiveWindow = 5 * time.Minute
 // raises vlan_silent (docs/02-plan.md section 7).
 const SilentAfter = 10 * time.Minute
 
+// Output is one monitoring target in the Prometheus export.
+type Output struct {
+	Name, Kind  string
+	Up          bool
+	Sent        uint64
+	Dropped     uint64
+	LastSuccess int64 // unix seconds, 0 = never
+}
+
 // Report is the JSON answer of GET /api/v1/monitoring. Flat numbers for Zabbix dependent items (JSONPath),
 // vlan_list for low-level discovery. Booleans are 0/1 so Zabbix can store them as numbers.
 type Report struct {
@@ -49,6 +58,11 @@ type Report struct {
 	Alarms        map[string]AlarmSummary `json:"alarms"`
 	SelfTest      int                     `json:"self_test_findings"`
 	VLANList      []VLAN                  `json:"vlan_list"`
+	// monitoring targets of the web role (syslog, OTLP, SNMP traps): enabled ones, failing ones, events dropped
+	OutputsTotal   int      `json:"outputs_total"`
+	OutputsFailing int      `json:"outputs_failing"`
+	OutputsDropped uint64   `json:"outputs_dropped"`
+	Outputs        []Output `json:"-"` // per target, for Prometheus only
 }
 
 // AlarmSummary aggregates all alarms of one kind.
@@ -151,6 +165,8 @@ func Build(st engineapi.Status, engineErr error, webVersion string, eventActive 
 	return r
 }
 
+func b2f(b bool) float64 { return float64(b2i(b)) }
+
 func b2i(b bool) int {
 	if b {
 		return 1
@@ -203,6 +219,21 @@ func WritePrometheus(w io.Writer, r Report, rules []engineapi.RuleStat) error {
 		p.head(m.name, m.typ, m.help)
 		for _, v := range r.VLANList {
 			p.sample(m.name, []string{"vid", fmt.Sprint(v.VID), "name", v.Name, "group", v.Group}, m.val(v))
+		}
+	}
+	type om struct {
+		name, typ, help string
+		val             func(Output) float64
+	}
+	for _, m := range []om{
+		{"nsrelay_output_up", "gauge", "1 unless the monitoring target is failing.", func(o Output) float64 { return b2f(o.Up) }},
+		{"nsrelay_output_sent_total", "counter", "Events delivered to the monitoring target since the web part started.", func(o Output) float64 { return float64(o.Sent) }},
+		{"nsrelay_output_dropped_total", "counter", "Events dropped for the monitoring target (queue full, too old, send failed).", func(o Output) float64 { return float64(o.Dropped) }},
+		{"nsrelay_output_last_success_timestamp_seconds", "gauge", "Unix time of the last successful send (0 = never).", func(o Output) float64 { return float64(o.LastSuccess) }},
+	} {
+		p.head(m.name, m.typ, m.help)
+		for _, o := range r.Outputs {
+			p.sample(m.name, []string{"target", o.Name, "kind", o.Kind}, m.val(o))
 		}
 	}
 	p.head("nsrelay_rule_received_frames_total", "counter", "Frames matched per rule.")

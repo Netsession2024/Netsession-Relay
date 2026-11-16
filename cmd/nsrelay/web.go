@@ -69,6 +69,11 @@ func runWeb(args []string, _, stderr io.Writer) int {
 	if n, _ := countLocalUsers(st); n == 0 {
 		log.Warn("no local account yet: create one with `nsrelay admin set-password <name>`")
 	}
+	ui.SNMPAddr = os.Getenv("NSRELAY_SNMP_ADDR")
+	ui.SetBindAddr(*addr)
+	defer ui.CloseOutputs()
+	defer ui.CloseAgent()
+	go ui.WatchAlarms(context.Background(), 10*time.Second) // alarm open/clear events for the monitoring targets
 	return serveWeb(*addr, ui, log, af.db)
 }
 

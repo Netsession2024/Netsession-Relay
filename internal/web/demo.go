@@ -79,6 +79,14 @@ func (d *DemoEngine) Players(context.Context) ([]engineapi.Player, error) {
 		out = append(out, engineapi.Player{Rule: s.Rules[i].ID, Src: netip.AddrFrom4(ip), VID: v.VID,
 			First: now.Add(-time.Duration(3+i*4) * time.Minute), Last: now.Add(-time.Duration(i) * time.Second), Count: uint64(40 + i*13)})
 	}
+	// a game server scanner in the last network (like a Discord notifier): .99 queries many games
+	last := s.VLANs[len(s.VLANs)-1]
+	ip := last.CIDR.Addr().As4()
+	ip[3] = 99
+	for i := 6; i < 12 && i < len(s.Rules); i++ {
+		out = append(out, engineapi.Player{Rule: s.Rules[i].ID, Src: netip.AddrFrom4(ip), VID: last.VID,
+			First: now.Add(-9 * time.Minute), Last: now.Add(-time.Duration(40+i) * time.Second), Count: 3})
+	}
 	return out, nil
 }
 

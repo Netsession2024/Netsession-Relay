@@ -5,9 +5,7 @@ import (
 	"fmt"
 	"net/http"
 	"net/netip"
-	"net/url"
 	"regexp"
-	"slices"
 	"strconv"
 	"strings"
 	"time"
@@ -247,56 +245,6 @@ func slug(name string) string {
 		s = "spiel_" + s
 	}
 	return s
-}
-
-type newGameForm struct {
-	Name, ID, Kind, Group, Ports, Direction, Notes string
-	Enable                                         bool
-	Err                                            string
-}
-
-func (s *Server) finderNewForm(w http.ResponseWriter, r *http.Request) {
-	q := r.URL.Query()
-	f := newGameForm{Kind: q.Get("kind"), Group: q.Get("group"), Ports: q.Get("port"), Direction: "both", Enable: true}
-	if f.Kind != gamedb.KindMulticast {
-		f.Kind, f.Group = gamedb.KindBroadcast, ""
-	}
-	s.render(w, r, "finder-new", "Spiel anlegen", "finder", f)
-}
-
-func (s *Server) finderNewGame(w http.ResponseWriter, r *http.Request) {
-	f := newGameForm{Name: strings.TrimSpace(r.PostFormValue("name")), ID: strings.TrimSpace(r.PostFormValue("id")),
-		Kind: r.PostFormValue("kind"), Group: strings.TrimSpace(r.PostFormValue("group")),
-		Ports: strings.TrimSpace(r.PostFormValue("ports")), Direction: r.PostFormValue("direction"),
-		Notes: strings.TrimSpace(r.PostFormValue("notes")), Enable: r.PostFormValue("enable") == "1"}
-	if f.ID == "" {
-		f.ID = slug(f.Name)
-	}
-	if !slices.Contains([]string{"query", "announce", "both"}, f.Direction) {
-		f.Direction = "both"
-	}
-	g := gamedb.Game{ID: f.ID, Name: f.Name, Category: gamedb.CategoryGame, RelayNeeded: gamedb.RelayYes,
-		Confidence: "low", SourceIP: gamedb.SourceOriginal,
-		Discovery: []gamedb.Spec{{Kind: f.Kind, Ports: f.Ports, Group: f.Group, Direction: f.Direction}},
-		Notes:     f.Notes,
-		Sources:   []string{fmt.Sprintf("Port-Finder %s (%s)", time.Now().Format("2006-01-02"), s.actor(r))}}
-	if err := s.Store.AddGame(r.Context(), s.actor(r), "sniffer", g); err != nil {
-		f.Err = germanGameError(err)
-		w.WriteHeader(http.StatusUnprocessableEntity)
-		s.render(w, r, "finder-new", "Spiel anlegen", "finder", f)
-		return
-	}
-	msg := f.Name + " angelegt (aus)."
-	if f.Enable {
-		if err := s.Store.SetGameEnabled(r.Context(), s.actor(r), g.ID, true); err == nil {
-			if a := s.applyNow(r, g.ID+" an (Port-Finder)"); a.OK {
-				msg = fmt.Sprintf("%s angelegt und eingeschaltet (Revision %d).", f.Name, a.Revision)
-			} else {
-				msg = f.Name + " angelegt, Anwenden fehlgeschlagen: " + a.Error
-			}
-		}
-	}
-	http.Redirect(w, r, "/spiele/"+url.PathEscape(g.ID)+"?ok="+urlQuery(msg), http.StatusSeeOther)
 }
 
 func germanGameError(err error) string {

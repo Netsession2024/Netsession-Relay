@@ -1,6 +1,6 @@
 {{define "content"}}
 <span class="bar"></span>
-<h1>Kompo<em>nenten</em></h1>
+<h1>UI-<em>Komponenten</em></h1>
 <p class="lead">Referenz für das Relay-UI. Alles hier nutzt nur Netsession-Token (Brand v1.1.0).</p>
 
 <section class="section">
@@ -12,40 +12,58 @@
 
 <section class="section">
   <h2>Kennzahlen</h2>
-  <div class="stats"><div class="stat"><b>65</b><span class="label">Spiele an</span></div><div class="stat"><b>1&#8239;204</b><span class="label">Pakete/s rein</span></div><div class="stat stat-alarm"><b>2</b><span class="label">Alarme</span></div></div>
+  <div class="stats"><div class="stat"><b>65</b><span class="label">Spiele an</span></div><div class="stat"><b>1&#8239;204</b><span class="label">Pakete/s rein</span></div><div class="stat"><b>9&#8239;577</b><span class="label">Kopien/s raus</span></div><div class="stat stat-alarm"><b>2</b><span class="label">Alarme</span></div></div>
 </section>
 
 <section class="section">
   <h2>Knöpfe</h2>
-  <p class="row"><button class="btn" type="button">Primär (einmal pro Ansicht)</button> <button class="btn-outline" type="button">Outline</button> <a href="#">Textlink</a></p>
+  <p class="row"><button class="btn" type="button">Primär (einmal pro Ansicht)</button> <button class="btn-outline" type="button">Outline</button> <button class="btn-outline btn-danger" type="button">{{icon "trash"}}<span>Löschen</span></button> <a href="#">Textlink</a></p>
   <p class="row"><button class="switch" role="switch" aria-checked="true" type="button" aria-label="Beispiel an"><span class="track" aria-hidden="true"><i></i></span><span class="switch-word" aria-hidden="true">An</span></button> <button class="switch" role="switch" aria-checked="false" type="button" aria-label="Beispiel aus"><span class="track" aria-hidden="true"><i></i></span><span class="switch-word" aria-hidden="true">Aus</span></button></p>
+  <p class="row">
+    <span class="seg"><a class="seg-item" href="#" aria-current="true">An <span class="n">65</span></a><a class="seg-item" href="#">Aus <span class="n">70</span></a><a class="seg-item" href="#">Alle <span class="n">135</span></a></span>
+    <label class="check"><input type="checkbox" checked><span>Haken an</span></label>
+    <label class="check"><input type="checkbox"><span>Haken aus</span></label>
+    <label class="check"><input type="radio" name="demo-r" checked><span>Wahl an</span></label>
+    <label class="check"><input type="radio" name="demo-r"><span>Wahl aus</span></label>
+  </p>
 </section>
 
 <section class="section">
   <h2>Status</h2>
-  <p class="row"><span class="tag tag-ok">Belegt</span> <span class="tag tag-warn">{{icon "alert"}}Unsicher</span> <span class="tag">Neutral</span></p>
-  <p class="notice notice-ok">{{icon "check"}}<span>FlatOut 2 ist an (Revision 7).</span></p>
-  <p class="notice notice-warn">{{icon "alert"}}<span>Tisch 7 schweigt seit 12 Minuten.</span></p>
-  <p class="notice notice-danger">{{icon "alert"}}<span>Zweites Relay entdeckt – dieses hier pausiert.</span></p>
+  <p class="row"><span class="flag" data-tone="ok">{{icon "check"}}verifiziert</span> <span class="flag" data-tone="warn">{{icon "alert"}}unsicher</span> <span class="flag" data-tone="danger">{{icon "alert"}}geht nicht</span> <span class="flag">Priorität</span> <span class="tag">Standard</span> <span class="tag tag-new">neu</span> <span class="tag tag-warn">Demo</span></p>
+  <p class="note" data-tone="ok">{{icon "check"}}<span class="note-body">FlatOut 2 ist an (Revision 7).</span></p>
+  <p class="note" data-tone="warn">{{icon "alert"}}<span class="note-body">Tisch 7 schweigt seit 12 Minuten.</span></p>
+  <p class="note" data-tone="info">{{icon "info"}}<span class="note-body">Port <span class="mono">25601</span> aus dem Mitschnitt.</span></p>
+  <p class="note" data-tone="danger">{{icon "alert"}}<span class="note-body">Zweites Relay entdeckt – dieses hier pausiert.</span></p>
+  <section class="status" data-tone="ok">
+    <span class="status-ic">{{icon "check"}}</span>
+    <div class="status-body"><h2>Relay leitet weiter</h2><p>Spiele-Broadcasts werden zwischen den Netzen kopiert.</p></div>
+  </section>
 </section>
 
 <section class="section">
   <h2>Tasten</h2>
-  <ul class="keys">
-    <li class="tile" data-status="Verkehr"><span class="key">GS</span><span class="tile-body"><span class="tile-name">Gameserver</span><span class="tile-status"><i class="dot"></i><span>Verkehr</span></span><span class="tile-rate"><b class="mono">42</b><span class="unit">/s</span></span></span></li>
-    <li class="tile" data-status="still"><span class="key">7</span><span class="tile-body"><span class="tile-name">Tisch 7</span><span class="tile-status"><i class="dot"></i><span>still</span></span><span class="tile-rate"><b class="mono">0</b><span class="unit">/s</span></span></span></li>
-    <li class="tile" data-status="aus"><span class="key">9</span><span class="tile-body"><span class="tile-name">Tisch 9</span><span class="tile-status"><i class="dot"></i><span>aus</span></span><span class="tile-rate"><b class="mono">0</b><span class="unit">/s</span></span></span></li>
+  <ul class="tiles">
+    <li class="tile" data-status="Verkehr"><div class="tile-link"><span class="key">GS</span><span class="tile-body"><span class="tile-name">Gameserver</span><span class="tile-rate"><b class="mono">42</b><span class="unit">/s</span></span><span class="tile-status"><i class="dot"></i><span>Verkehr</span></span><span class="mono tile-vid">1100</span><span class="tile-track"><i></i></span></span></div></li>
+    <li class="tile" data-status="still"><div class="tile-link"><span class="key">7</span><span class="tile-body"><span class="tile-name">Tisch 7</span><span class="tile-rate"><b class="mono">0</b><span class="unit">/s</span></span><span class="tile-status"><i class="dot"></i><span>still</span></span><span class="mono tile-vid">1107</span><span class="tile-track"><i></i></span></span></div></li>
+    <li class="tile" data-status="Alarm"><div class="tile-link"><span class="key">2</span><span class="tile-body"><span class="tile-name">Tisch 2</span><span class="tile-rate"><b class="mono">9</b><span class="unit">/s</span></span><span class="tile-status">{{icon "alert"}}<span>Fremdes Relay</span></span><span class="mono tile-vid">1102</span><span class="tile-track"><i></i></span></span></div></li>
+    <li class="tile" data-status="aus"><div class="tile-link"><span class="key">9</span><span class="tile-body"><span class="tile-name">Tisch 9</span><span class="tile-rate"><b class="mono">0</b><span class="unit">/s</span></span><span class="tile-status"><i class="dot"></i><span>aus</span></span><span class="mono tile-vid">1109</span><span class="tile-track"><i></i></span></span></div></li>
   </ul>
 </section>
 
 <section class="section">
-  <h2>Tabelle</h2>
+  <h2>Tabelle und Fläche</h2>
   <div class="tablewrap"><table><thead><tr><th>Port</th><th>Spiel</th><th class="num">Pakete</th></tr></thead>
-  <tbody><tr><td class="mono">23757</td><td>FlatOut 1, FlatOut 2</td><td class="num mono">1&#8239;204</td></tr><tr><td class="mono">27015-27020</td><td>Source-Spiele</td><td class="num mono">88</td></tr></tbody></table></div>
+  <tbody><tr><td class="mono">23757</td><td>FlatOut +1</td><td class="num mono">1&#8239;204</td></tr><tr><td class="mono">27015-27020</td><td>Source-Spiele</td><td class="num mono">88</td></tr></tbody></table></div>
+  <div class="panel">
+    <h3>Fläche (Brandbook .box)</h3>
+    <div class="actrow"><p><b>Backup.</b> Text links, Aktion rechts.</p><button class="btn-outline" type="button">{{icon "download"}}<span>Laden</span></button></div>
+    <div class="actrow"><p><b>Verlauf.</b> Zeilen mit Trennlinie.</p><button class="btn-outline" type="button"><span>Öffnen</span>{{icon "arrow"}}</button></div>
+  </div>
 </section>
 
 <section class="section">
   <h2>Icons</h2>
-  <p class="row icons">{{icon "power"}} {{icon "alert"}} {{icon "check"}} {{icon "search"}} {{icon "arrow"}} {{icon "download"}} {{icon "logout"}} {{icon "pause"}} {{icon "eye"}} {{icon "info"}} {{icon "dash"}} {{icon "user"}} {{icon "chevron"}} {{icon "back"}} {{icon "close"}}</p>
+  <p class="row icons">{{icon "power"}} {{icon "alert"}} {{icon "check"}} {{icon "search"}} {{icon "arrow"}} {{icon "download"}} {{icon "logout"}} {{icon "pause"}} {{icon "eye"}} {{icon "info"}} {{icon "dash"}} {{icon "user"}} {{icon "chevron"}} {{icon "back"}} {{icon "close"}} {{icon "plus"}} {{icon "edit"}} {{icon "trash"}}</p>
 </section>
 {{end}}

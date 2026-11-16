@@ -1,32 +1,32 @@
-{{define "hints"}}{{range $i, $g := .}}{{if $i}}, {{end}}<a class="rowlink" href="/spiele/{{$g.ID}}">{{$g.Name}}</a>{{if not $g.On}} <span class="tag tag-warn">aus</span>{{end}}{{end}}{{end}}
+{{define "hints"}}{{range $i, $g := .}}{{if $i}}, {{end}}<a class="rowlink" href="/spiele/{{$g.ID}}">{{$g.Name}}</a>{{if not $g.On}} <span class="flag" data-tone="warn">{{icon "alert"}}aus</span>{{end}}{{end}}{{end}}
 
 {{define "finder-result"}}
 {{$s := .Status}}
-{{if .Err}}<p class="notice notice-danger">{{icon "alert"}}<span>Die Engine antwortet nicht. Der Port-Finder läuft in der Engine.</span></p>
+{{if .Err}}<p class="note" data-tone="danger">{{icon "alert"}}<span class="note-body">Die Engine antwortet nicht. Der Port-Finder läuft in der Engine.</span></p>
 {{else if $s.Started.IsZero}}<p class="quiet">{{icon "info"}}<span>Noch keine Sitzung. Netz wählen, starten, dann am Test-PC das Spiel starten und den LAN-Browser öffnen.</span></p>
 {{else}}
 <p class="nowline">
-  {{if $s.Active}}<span class="state" data-tone="ok">{{icon "eye"}}<span>Läuft, noch <span class="mono">{{.Left}}</span></span></span>
-  {{else}}<span class="state" data-tone="neutral">{{icon "pause"}}<span>Beendet</span></span>{{end}}
+  {{if $s.Active}}<span class="state state-box" data-tone="ok">{{icon "eye"}}<span>Läuft, noch <span class="mono">{{.Left}}</span></span></span>
+  {{else}}<span class="state state-box" data-tone="neutral">{{icon "pause"}}<span>Beendet</span></span>{{end}}
   <span class="small muted">gestartet {{ts $s.Started "time"}} · {{num $s.Frames}} Pakete · {{num $s.Captured}} im Mitschnitt{{if $s.Src}} · nur von <span class="mono">{{$s.Src}}</span>{{end}}</span>
 </p>
 {{if .Rows}}
-<div class="tablewrap"><table class="finder">
+<div class="tablewrap"><table class="finder stack">
   <thead><tr><th>Ziel</th><th class="num">Port</th><th>Spiel</th><th class="num">Pakete</th><th class="col-opt">Abstand</th><th class="col-opt">Größe</th><th>Absender</th><th class="col-opt">Netz</th><th class="col-opt">Seit Start</th><th><span class="sr">Aktion</span></th></tr></thead>
   <tbody>
-  {{range .Rows}}<tr class="finder-main{{if .New}} row-new{{end}}">
-    <td>{{.Dest}}{{if .New}} <span class="tag tag-new">neu</span>{{end}}</td>
-    <td class="num mono"><b>{{.Port}}</b></td>
-    <td>{{if .Rule}}{{template "hints" .Games}}{{else if .Noise}}<span class="muted">{{.Noise}} (Lärm)</span>{{else if .Games}}<span class="small muted">in der Datenbank:</span> {{template "hints" .Games}}{{else}}<span class="tag tag-warn">{{icon "alert"}}unbekannt</span>{{end}}</td>
-    <td class="num mono">{{num .Count}}</td>
-    <td class="col-opt mono">{{.Interval}}</td>
-    <td class="col-opt mono">{{.Size}}</td>
-    <td class="small finder-srcs"><span class="mono">{{.Srcs}}</span></td>
-    <td class="col-opt small">{{.Nets}}</td>
-    <td class="col-opt mono small">{{.Offset}}</td>
-    <td class="finder-act">{{if and (not .Rule) (not .Noise) (not .Games)}}<a class="btn-outline btn-sm" href="/finder/neu?kind={{.Kind}}&amp;port={{.Port}}{{if .Group}}&amp;group={{.Group}}{{end}}" aria-label="Spiel anlegen für Port {{.Port}}">Spiel anlegen</a>{{end}}</td>
+  {{range .Rows}}<tr class="finder-main">
+    <td class="stack-main">{{.Dest}}{{if .New}} <span class="tag tag-new">neu</span>{{end}}</td>
+    <td class="num mono" data-th="Port"><b>{{.Port}}</b></td>
+    <td data-th="Spiel">{{if .Rule}}{{template "hints" .Games}}{{else if .Noise}}<span class="muted">{{.Noise}} (Lärm)</span>{{else if .Games}}<span class="small muted">in der Datenbank:</span> {{template "hints" .Games}}{{else}}<span class="flag" data-tone="warn">{{icon "alert"}}unbekannt</span>{{end}}</td>
+    <td class="num mono" data-th="Pakete">{{num .Count}}</td>
+    <td class="col-opt mono" data-th="Abstand">{{.Interval}}</td>
+    <td class="col-opt mono" data-th="Größe">{{.Size}}</td>
+    <td class="small finder-srcs" data-th="Absender"><span class="mono">{{.Srcs}}</span></td>
+    <td class="col-opt small" data-th="Netz">{{.Nets}}</td>
+    <td class="col-opt mono small" data-th="Seit Start">{{.Offset}}</td>
+    <td class="finder-act">{{if and (not .Rule) (not .Noise) (not .Games)}}<a class="btn-outline btn-sm" href="/spiele/neu?from=finder&amp;kind={{.Kind}}&amp;port={{.Port}}{{if .Group}}&amp;group={{.Group}}{{end}}" aria-label="Spiel anlegen für Port {{.Port}}">Spiel anlegen</a>{{end}}</td>
   </tr>
-  <tr class="finder-sample{{if .New}} row-new{{end}}"><td colspan="10"><details class="fold" data-key="{{.Kind}}-{{.Group}}-{{.Port}}"><summary><span class="label">Erste Bytes<span class="sr"> von Port {{.Port}}</span></span></summary><pre class="mono small hexdump">{{.Hex}}
+  <tr class="finder-sample"><td colspan="10"><details class="fold" data-key="{{.Kind}}-{{.Group}}-{{.Port}}"><summary><span class="label">Erste Bytes<span class="sr"> von Port {{.Port}}</span></span></summary><pre class="mono small hexdump">{{.Hex}}
 {{.ASCII}}</pre></details></td></tr>{{end}}
   </tbody>
 </table></div>
@@ -44,15 +44,14 @@
 <p class="lead">Ein Spiel fehlt in der Liste? Der Port-Finder zeigt, was es ins LAN ruft. Daraus wird mit einem Klick ein Spiel.</p>
 
 <section class="section section-first grid2">
-  <div>
+  <div class="panel">
     <h2>Sitzung starten</h2>
     <form method="post" action="/finder/start" class="form">
       <input type="hidden" name="csrf" value="{{.CSRF}}">
       <fieldset class="radios">
-        <legend class="label">Netze</legend>
-        <p class="hint">Keins gewählt: alle Netze.</p>
+        <legend class="label">Netze <span class="muted">· keins gewählt = alle</span></legend>
         <div class="picks">
-          {{range $d.VLANs}}<label class="radio"><input type="checkbox" name="vid" value="{{.VID}}"{{if index $d.Picked .VID}} checked{{end}}><span>{{.Name}} <span class="mono small muted">{{.VID}}</span></span></label>{{end}}
+          {{range $d.VLANs}}<label class="check"><input type="checkbox" name="vid" value="{{.VID}}"{{if index $d.Picked .VID}} checked{{end}}><span>{{.Name}}<span class="sr">, VLAN {{.VID}}</span></span></label>{{end}}
         </div>
       </fieldset>
       <div class="field"><label class="label" for="src">Adresse des Test-PCs (optional)</label>
@@ -68,12 +67,12 @@
     {{if $d.Status.Active}}<form method="post" action="/finder/stop" id="finder-stop" hidden><input type="hidden" name="csrf" value="{{.CSRF}}"></form>{{end}}
   </div>
   <div>
-    <h2>So gehts</h2>
+    <h2>So geht’s</h2>
     <ol class="howto">
-      <li>Netz des Test-PCs wählen, am besten auch seine Adresse.</li>
-      <li>Starten. Am PC das Spiel öffnen, den LAN-Browser aufrufen und einmal ein Spiel hosten.</li>
-      <li>Was danach dazukommt, ist als <span class="tag tag-new">neu</span> markiert. Bei unbekanntem Port: <b>Spiel anlegen</b>.</li>
-      <li>Den Mitschnitt für die Spiele-Datenbank aufheben.</li>
+      <li><span class="howto-text">Netz des Test-PCs wählen, am besten auch seine Adresse.</span></li>
+      <li><span class="howto-text">Starten. Am PC das Spiel öffnen, den LAN-Browser aufrufen und einmal ein Spiel hosten.</span></li>
+      <li><span class="howto-text">Was danach dazukommt, ist als <span class="tag tag-new">neu</span> markiert. Bei unbekanntem Port: <b>Spiel anlegen</b>.</span></li>
+      <li><span class="howto-text">Den Mitschnitt für die Spiele-Datenbank aufheben.</span></li>
     </ol>
   </div>
 </section>
@@ -86,15 +85,15 @@
   <div id="finder-result" data-refresh="/finder?teil=ergebnis{{if $d.ShowNoise}}&amp;laerm=1{{end}}">{{template "finder-result" $d}}</div>
 </section>
 
-<section class="section" aria-labelledby="unbekannt-h">
+<section class="section" id="unbekannt" aria-labelledby="unbekannt-h">
   <h2 id="unbekannt-h">Unbekannte Ports seit Engine-Start</h2>
   <p class="muted">Broadcasts ohne Regel, aus allen Netzen. Steht ein Spiel dabei, ist es nur ausgeschaltet.</p>
   {{if $d.Unknown}}
-  <div class="tablewrap finder-unknown"><table>
-    <thead><tr><th class="num">Port</th><th class="num">Pakete</th><th>Was es sein könnte</th><th><span class="sr">Aktion</span></th></tr></thead>
-    <tbody>{{range $d.Unknown}}<tr><td class="num mono"><b>{{.Port}}</b></td><td class="num mono">{{num .Count}}</td>
-      <td>{{if .Noise}}<span class="muted">{{.Noise}} (Lärm)</span>{{else if .Games}}{{template "hints" .Games}}{{else}}<span class="muted">nichts in der Datenbank</span>{{end}}</td>
-      <td class="finder-act">{{if and (not .Noise) (not .Games)}}<a class="btn-outline btn-sm" href="/finder/neu?kind=broadcast&amp;port={{.Port}}" aria-label="Spiel anlegen für Port {{.Port}}">Spiel anlegen</a>{{end}}</td></tr>{{end}}</tbody>
+  <div class="tablewrap finder-unknown"><table class="stack">
+    <thead><tr><th>Port</th><th class="num">Pakete</th><th>Was es sein könnte</th><th><span class="sr">Aktion</span></th></tr></thead>
+    <tbody>{{range $d.Unknown}}<tr><td class="mono stack-main"><span class="sr">Port </span><b>{{.Port}}</b></td><td class="num mono" data-th="Pakete">{{num .Count}}</td>
+      <td data-th="Könnte sein">{{if .Noise}}<span class="muted">{{.Noise}} (Lärm)</span>{{else if .Games}}{{template "hints" .Games}}{{else}}<span class="muted">nichts in der Datenbank</span>{{end}}</td>
+      <td class="finder-act">{{if and (not .Noise) (not .Games)}}<a class="btn-outline btn-sm" href="/spiele/neu?from=finder&amp;kind=broadcast&amp;port={{.Port}}" aria-label="Spiel anlegen für Port {{.Port}}">Spiel anlegen</a>{{end}}</td></tr>{{end}}</tbody>
   </table></div>
   {{else}}<p class="quiet">{{icon "info"}}<span>Bisher keine Broadcasts auf Ports ohne Regel.</span></p>{{end}}
 </section>

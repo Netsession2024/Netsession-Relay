@@ -177,7 +177,7 @@ func TestNewPagesAndFragment(t *testing.T) {
 	e := setup(t)
 	admin, csrf := e.client("admin")
 	for path, want := range map[string]string{
-		"/verlauf":                       "Angemeldet",
+		"/verlauf":                       "einblenden", // the link that shows the hidden logins
 		"/verlauf?anmeldungen=1":         "Anmeldungen ausblenden",
 		"/notaus":                        "Relay pausieren",
 		"/spiele/flatout2":               "Wird es gefunden?",

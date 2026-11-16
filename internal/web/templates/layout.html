@@ -30,14 +30,15 @@
     </nav>
     <div class="top-side">
       {{if .Demo}}<span class="tag tag-warn demo-tag" title="Erfundene Daten, es wird nichts weitergeleitet">Demo</span>{{end}}
-      <a class="state" id="engine-state" href="/" data-tone="{{.Live.State.Tone}}" data-tone-live>
+      <a class="state" id="engine-state" href="/" data-tone="{{.Live.State.Tone}}" data-tone-live title="Betriebsart. Zur Übersicht">
         <span data-icon-live>{{icon .Live.State.Icon}}</span><span class="sr">Betriebsart: </span><span data-live="state.label">{{.Live.State.Label}}</span>
       </a>
       <span class="live" id="live" data-state="static" title="Stand vom Seitenaufruf. Mit JavaScript aktualisiert sich die Seite alle 2 Sekunden.">
-        <i class="dot" aria-hidden="true"></i><span id="live-text">Stand {{ts .Live.TS "time"}}</span>
+        <i class="dot" aria-hidden="true"></i><span id="live-text">{{ts .Live.TS "time"}}</span>
       </span>
       {{if hasRole .User "operator"}}
       <a class="btn-outline btn-stop" id="stop-link" href="/notaus"{{if not .Live.State.CanStop}} hidden{{end}}>{{icon "power"}}<span>Not-Aus</span></a>
+      <a class="btn-outline btn-resume" id="resume-link" href="/notaus"{{if ne .Live.State.Key "paused"}} hidden{{end}}>{{icon "power"}}<span>Wieder an</span></a>
       {{end}}
       <details class="account">
         <summary aria-label="Konto {{.User.Name}}">{{icon "user"}}<span class="account-name">{{.User.Name}}</span></summary>
@@ -58,18 +59,18 @@
 </header>
 {{end}}
 <main class="wrap{{if eq .Nav "login"}} wrap-login{{end}}" id="inhalt" tabindex="-1">
-  {{if .Flash}}<p class="notice notice-ok" role="status">{{icon "check"}}<span>{{.Flash}}</span></p>{{end}}
-  {{if .Error}}<p class="notice notice-danger" role="alert">{{icon "alert"}}<span>{{.Error}}</span></p>{{end}}
+  {{if .Flash}}<p class="note" data-tone="ok" role="status">{{icon "check"}}<span class="note-body">{{.Flash}}</span></p>{{end}}
+  {{if .Error}}<p class="note" data-tone="danger" role="alert">{{icon "alert"}}<span class="note-body">{{.Error}}</span></p>{{end}}
   {{template "content" .}}
 </main>
 {{if .User.Name}}
-<footer class="foot wrap">
+<footer class="foot"><div class="foot-in">
   <span>Netsession Relay <span class="mono">{{.Version}}</span>{{if .Demo}} · Demo mit erfundenen Daten{{end}}</span>
-  <span>Angemeldet als <b>{{.User.Name}}</b> · {{roleName .User.Role}}</span>
-</footer>
+  <span>{{.User.Name}} · {{roleName .User.Role}}</span>
+</div></footer>
 {{if hasRole .User "operator"}}
 <form method="post" action="/system/notaus" id="stop-form" hidden
-      data-confirm="Das Relay hört sofort auf, Spiele zwischen den Netzen zu verteilen. Laufende Partien bleiben bestehen, neue Spiele werden nur noch am eigenen Tisch gefunden. Wieder einschalten kann ein Admin unter System."
+      data-confirm="Das Relay hört sofort auf, Spiele zwischen den Netzen zu verteilen. Laufende Partien bleiben bestehen, neue Spiele werden nur noch am eigenen Tisch gefunden. Wieder einschalten: Knopf „Wieder an“ oben, ab Operator."
       data-confirm-title="Relay jetzt pausieren?" data-confirm-ok="Relay pausieren">
   <input type="hidden" name="csrf" value="{{.CSRF}}">
 </form>
@@ -84,7 +85,7 @@
     </div>
   </form>
 </dialog>
-<div class="toast" id="toast" hidden>
+<div class="toast" id="toast" data-tone="ok" hidden>
   <span id="toast-icon">{{icon "check"}}</span><span id="toast-text" role="status" aria-live="polite"></span>
   <button class="icon-btn" type="button" id="toast-close" aria-label="Meldung schließen">{{icon "close"}}</button>
 </div>

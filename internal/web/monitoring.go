@@ -10,10 +10,8 @@ import (
 	"time"
 
 	"github.com/Netsession2024/Netsession-Relay/internal/auth"
-	"github.com/Netsession2024/Netsession-Relay/internal/compile"
 	"github.com/Netsession2024/Netsession-Relay/internal/engineapi"
 	"github.com/Netsession2024/Netsession-Relay/internal/monitor"
-	"github.com/Netsession2024/Netsession-Relay/internal/store"
 )
 
 // settingMonitorToken holds the SHA-256 (hex) of the monitoring token; the token itself is shown once.
@@ -49,7 +47,23 @@ func (s *Server) monitorReport(ctx context.Context) (monitor.Report, []engineapi
 	defer cancel()
 	st, err := s.Engine.Status(ctx)
 	_, evErr := s.Store.ActiveEvent(ctx)
-	return monitor.Build(st, err, s.Version, evErr == nil, time.Now()), st.RuleStats
+	rep := monitor.Build(st, err, s.Version, evErr == nil, time.Now())
+	for _, o := range s.notify.Status() {
+		if o.State == "off" {
+			continue
+		}
+		rep.OutputsTotal++
+		if o.Failing() {
+			rep.OutputsFailing++
+		}
+		rep.OutputsDropped += o.Dropped
+		x := monitor.Output{Name: o.Name, Kind: o.Kind, Up: !o.Failing(), Sent: o.Sent, Dropped: o.Dropped}
+		if !o.LastOK.IsZero() {
+			x.LastSuccess = o.LastOK.Unix()
+		}
+		rep.Outputs = append(rep.Outputs, x)
+	}
+	return rep, st.RuleStats
 }
 
 // apiMonitoring is the Zabbix master item (HTTP agent, deploy/zabbix/template_nsrelay.yaml).
@@ -75,7 +89,8 @@ func (s *Server) newMonitorToken(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	_ = s.Store.Audit(r.Context(), s.actor(r), "monitor.token", "", "", "")
-	mode, _ := s.Store.Setting(r.Context(), store.SettingMode, compile.ModeActive)
+	d := s.monitoringData(r)
+	d["NewToken"] = tok
 	w.Header().Set("Cache-Control", "no-store")
-	s.render(w, r, "system", "System", "system", map[string]any{"Mode": mode, "MonitorSet": true, "NewToken": tok})
+	s.render(w, r, "monitoring", "Monitoring", "system", d)
 }

@@ -1,0 +1,91 @@
+{{define "content"}}
+{{$f := .Data}}{{$csrf := .CSRF}}
+{{if $f.New}}<p class="crumbs"><a href="{{if eq $f.From "finder"}}/finder{{else}}/spiele{{end}}">{{icon "back"}}{{if eq $f.From "finder"}}Port-Finder{{else}}Alle Spiele{{end}}</a></p>
+{{else}}<p class="crumbs"><a href="/spiele/{{$f.ID}}">{{icon "back"}}{{$f.Name}}</a></p>{{end}}
+<span class="bar"></span>
+{{if $f.New}}<h1>Spiel <em>anlegen</em></h1>
+<p class="lead">{{if eq $f.From "finder"}}Aus dem Mitschnitt übernommen. Gib dem Spiel einen Namen.{{else}}Ein Spiel, das die Datenbank nicht kennt. Die Ports zeigt der <a href="/finder">Port-Finder</a>.{{end}}</p>
+{{else}}<h1>{{$f.Name}} <em>bearbeiten</em></h1>
+<p class="lead">{{if eq $f.Origin "seed"}}Kommt aus der Spiele-Datenbank. Deine Änderung bleibt, auch wenn die Datenbank später etwas anderes sagt.{{else}}Selbst angelegt.{{end}}{{if $f.Enable}} Das Spiel ist an, Änderungen gelten sofort.{{end}}</p>{{end}}
+{{with $f.Err}}<p class="note" data-tone="danger" role="alert">{{icon "alert"}}<span class="note-body">{{.}}</span></p>{{end}}
+<form method="post" action="{{if $f.New}}/spiele/neu{{else}}/spiele/{{$f.ID}}/bearbeiten{{end}}" class="form form-wide section-first">
+  <input type="hidden" name="csrf" value="{{$csrf}}">
+  <input type="hidden" name="from" value="{{$f.From}}">
+
+  <section class="panel" aria-labelledby="g-h">
+    <h2 id="g-h">Spiel</h2>
+    <div class="form form-wide">
+      <div class="field"><label class="label" for="name">Name</label>
+        <input id="name" name="name" required value="{{$f.Name}}" placeholder="FlatOut: Ultimate Carnage" autocomplete="off"></div>
+      {{if $f.New}}<div class="field"><label class="label" for="id">Kennung (optional)</label>
+        <input id="id" name="id" value="{{$f.ID}}" pattern="[a-z0-9][a-z0-9_]*" title="Nur Kleinbuchstaben, Ziffern und _" placeholder="flatout_uc" autocomplete="off" autocapitalize="none" spellcheck="false" class="mono" aria-describedby="id-hint">
+        <p class="hint" id="id-hint">Kleinbuchstaben, Ziffern und _. Leer: wird aus dem Namen gebildet. Lässt sich später nicht ändern.</p></div>{{end}}
+      <div class="field"><label class="label" for="aliases">Auch bekannt als (optional)</label>
+        <input id="aliases" name="aliases" value="{{$f.Aliases}}" placeholder="FOUC, FlatOut 3" autocomplete="off" aria-describedby="aliases-hint">
+        <p class="hint" id="aliases-hint">Mit Komma getrennt. Hilft bei der Suche.</p></div>
+      <fieldset><legend class="label">Art des Eintrags</legend>
+        <div class="seg">
+          <label class="seg-item"><input type="radio" name="category" value="game"{{if ne $f.Category "platform"}} checked{{end}}><span>Spiel</span></label>
+          <label class="seg-item"><input type="radio" name="category" value="platform"{{if eq $f.Category "platform"}} checked{{end}}><span>Plattform</span></label>
+        </div>
+        <p class="hint">Plattform: gemeinsame Technik für viele Spiele, z. B. Steam oder DirectPlay.</p>
+      </fieldset>
+    </div>
+  </section>
+
+  <section class="panel" aria-labelledby="s-h">
+    <h2 id="s-h">LAN-Suche</h2>
+    <fieldset class="specs">
+      <legend class="sr">Wie das Spiel im LAN sucht</legend>
+      <p class="hint">Was das Spiel ins LAN ruft, um Server zu finden. Eine Zeile pro Port oder Bereich. Zeile leeren = entfernen.</p>
+      {{range $i, $s := $f.Specs}}
+      <div class="spec-row">
+        <div class="field"><label class="label label-first" for="kind{{$i}}">Art</label>
+          <select id="kind{{$i}}" name="kind{{$i}}" data-toggles="group-field{{$i}}" data-toggles-on="multicast"><option value="broadcast"{{if eq $s.Kind "broadcast"}} selected{{end}}>Broadcast</option><option value="multicast"{{if eq $s.Kind "multicast"}} selected{{end}}>Multicast</option></select></div>
+        <div class="field"><label class="label label-first" for="ports{{$i}}">UDP-Ports</label>
+          <input id="ports{{$i}}" name="ports{{$i}}" value="{{$s.Ports}}" class="mono" placeholder="{{if eq $i 0}}23757 oder 27015-27020{{else}}weiterer Port{{end}}" autocomplete="off" spellcheck="false"></div>
+        <div class="field"><label class="label label-first" for="direction{{$i}}">Was das Paket tut</label>
+          <select id="direction{{$i}}" name="direction{{$i}}">
+            <option value="both"{{if or (eq $s.Direction "both") (eq $s.Direction "")}} selected{{end}}>Weiß nicht</option>
+            <option value="query"{{if eq $s.Direction "query"}} selected{{end}}>Suche</option>
+            <option value="announce"{{if eq $s.Direction "announce"}} selected{{end}}>Ankündigung</option>
+          </select></div>
+        <div class="field spec-group" id="group-field{{$i}}"><label class="label" for="group{{$i}}">Multicast-Gruppe</label>
+          <input id="group{{$i}}" name="group{{$i}}" value="{{$s.Group}}" class="mono" inputmode="decimal" placeholder="239.1.2.3" autocomplete="off" spellcheck="false"></div>
+        <input type="hidden" name="adv{{$i}}" value="{{$s.Adv}}">
+      </div>
+      {{end}}
+      <p class="hint">Suche: kommt, wenn jemand den LAN-Browser öffnet. Ankündigung: kommt, solange ein Server läuft. Im Zweifel „Weiß nicht“.</p>
+    </fieldset>
+    <fieldset><legend class="label">Wie sicher sind die Ports?</legend>
+      <div class="seg seg-wide">
+        <label class="seg-item"><input type="radio" name="confidence" value="low"{{if and (ne $f.Confidence "medium") (ne $f.Confidence "high")}} checked{{end}}><span>Unsicher</span></label>
+        <label class="seg-item"><input type="radio" name="confidence" value="medium"{{if eq $f.Confidence "medium"}} checked{{end}}><span>Wahrscheinlich</span></label>
+        <label class="seg-item"><input type="radio" name="confidence" value="high"{{if eq $f.Confidence "high"}} checked{{end}}><span>Belegt</span></label>
+      </div>
+      <p class="hint">Unsicher: vor Ort prüfen. Belegt: gemessen oder dokumentiert.</p>
+    </fieldset>
+  </section>
+
+  <section class="panel" aria-labelledby="n-h">
+    <h2 id="n-h">Notiz</h2>
+    <div class="form form-wide">
+      <div class="field"><label class="label" for="notes">Notiz (optional)</label>
+        <textarea id="notes" name="notes" rows="3" placeholder="Version, Store, was getestet wurde">{{$f.Notes}}</textarea></div>
+      {{if $f.New}}<label class="check"><input type="checkbox" name="enable" value="1"{{if $f.Enable}} checked{{end}}><span><b>Gleich einschalten</b><small>gilt sofort im aktiven Event</small></span></label>{{end}}
+    </div>
+  </section>
+
+  <div class="actions"><button class="btn" type="submit">{{if $f.New}}Spiel anlegen{{else}}Speichern{{end}}</button> <a class="btn-outline" href="{{if $f.New}}/spiele{{else}}/spiele/{{$f.ID}}{{end}}">Abbrechen</a></div>
+</form>
+{{if and (not $f.New) (ne $f.Origin "seed")}}
+<section class="section">
+  <h2>Spiel löschen</h2>
+  <p class="muted">Nur selbst angelegte Spiele lassen sich löschen. Ausschalten reicht meistens.</p>
+  <form method="post" action="/spiele/{{$f.ID}}/loeschen" data-confirm="{{$f.Name}} verschwindet aus allen Events." data-confirm-title="{{$f.Name}} löschen?" data-confirm-ok="Löschen">
+    <input type="hidden" name="csrf" value="{{$csrf}}">
+    <button class="btn-outline btn-danger" type="submit">{{icon "trash"}}<span>Spiel löschen</span></button>
+  </form>
+</section>
+{{end}}
+{{end}}

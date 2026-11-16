@@ -13,6 +13,8 @@ import (
 	"log/slog"
 	"net"
 	"net/http"
+	"net/netip"
+	"slices"
 	"strings"
 	"sync"
 	"time"
@@ -20,6 +22,8 @@ import (
 	"github.com/Netsession2024/Netsession-Relay/internal/auth"
 	"github.com/Netsession2024/Netsession-Relay/internal/compile"
 	"github.com/Netsession2024/Netsession-Relay/internal/engineapi"
+	"github.com/Netsession2024/Netsession-Relay/internal/notify"
+	"github.com/Netsession2024/Netsession-Relay/internal/snmp"
 	"github.com/Netsession2024/Netsession-Relay/internal/store"
 )
 
@@ -55,6 +59,17 @@ type Server struct {
 	// LiveInterval is the pause between two live samples (default 2 s).
 	LiveInterval time.Duration
 
+	// BindAddr is the source address of outgoing monitoring connections (set with SetBindAddr).
+	BindAddr netip.Addr
+	// SNMPAddr overrides the address the SNMP agent binds (NSRELAY_SNMP_ADDR); default BindAddr.
+	SNMPAddr string
+
+	agentMu  sync.Mutex
+	agent    *snmp.Agent
+	agentErr string
+
+	notify  *notify.Dispatcher
+	started time.Time
 	tpl     map[string]*template.Template
 	mux     *http.ServeMux
 	hub     *liveHub
@@ -66,25 +81,37 @@ const cookieName = "nsrelay_session"
 
 // New builds the server and parses all templates.
 func New(st *store.Store, eng Engine, log *slog.Logger, version string) (*Server, error) {
-	s := &Server{Store: st, Engine: eng, Log: log, Version: version, tpl: map[string]*template.Template{},
+	s := &Server{Store: st, Engine: eng, Log: log, Version: version, tpl: map[string]*template.Template{}, started: time.Now(),
 		hub: &liveHub{subs: map[chan []byte]struct{}{}}}
 	funcs := template.FuncMap{
-		"static":   func(p string) string { return "/static/" + p + "?v=" + version },
-		"icon":     icon,
-		"join":     strings.Join,
-		"short":    func(h string) string { return shortHash(h) },
-		"num":      formatNum,
-		"hasRole":  func(u store.User, role string) bool { return store.RoleRank(u.Role) >= store.RoleRank(role) },
-		"tableKey": tableKey,
-		"modeName": modeName,
-		"add":      func(a, b int) int { return a + b },
-		"ts":       timeTag,
-		"dict":     dict,
-		"roleName": roleName,
-		"group":    groupName,
-		"kindName": kindName,
-		"dirName":  dirName,
-		"confName": confName,
+		"static":      func(p string) string { return "/static/" + p + "?v=" + version },
+		"icon":        icon,
+		"join":        strings.Join,
+		"has":         slices.Contains[[]string],
+		"list":        func(v ...string) []string { return v },
+		"upper":       strings.ToUpper,
+		"short":       func(h string) string { return shortHash(h) },
+		"num":         formatNum,
+		"hasRole":     func(u store.User, role string) bool { return store.RoleRank(u.Role) >= store.RoleRank(role) },
+		"tableKey":    tableKey,
+		"modeName":    modeName,
+		"add":         func(a, b int) int { return a + b },
+		"ts":          timeTag,
+		"dict":        dict,
+		"roleName":    roleName,
+		"group":       groupName,
+		"resultName":  resultName,
+		"serviceURL":  serviceFormURL,
+		"resultTone":  resultTone,
+		"resultIcon":  resultIcon,
+		"resultBadge": resultBadge,
+		"viewShows":   func(view string, on bool) bool { return view == "alle" || (view == "an") == on },
+		"kindName":    kindName,
+		"dirName":     dirName,
+		"confName":    confName,
+		"alarmNets":   alarmNetsText,
+		"shortName":   shortName,
+		"sub":         func(a, b int) int { return a - b },
 	}
 	pages, err := fs.Glob(templateFS, "templates/*.html")
 	if err != nil {
@@ -102,6 +129,8 @@ func New(st *store.Store, eng Engine, log *slog.Logger, version string) (*Server
 		s.tpl[name] = t
 	}
 	s.routes()
+	s.initOutputs()
+	st.SetOnAudit(s.auditToOutputs)
 	return s, nil
 }
 
@@ -136,11 +165,47 @@ func (s *Server) routes() {
 	m.Handle("GET /spiele", s.need(store.RoleViewer, s.games))
 	m.Handle("GET /spiele/{id}", s.need(store.RoleViewer, s.game))
 	m.Handle("POST /spiele/{id}", s.need(store.RoleOperator, s.toggleGame))
+	m.Handle("GET /spiele/neu", s.need(store.RoleOperator, s.gameNewForm))
+	m.Handle("POST /spiele/neu", s.need(store.RoleOperator, s.gameCreate))
+	m.Handle("GET /spiele/{id}/bearbeiten", s.need(store.RoleOperator, s.gameEditForm))
+	m.Handle("POST /spiele/{id}/bearbeiten", s.need(store.RoleOperator, s.gameUpdate))
+	m.Handle("POST /spiele/{id}/loeschen", s.need(store.RoleOperator, s.gameDelete))
 	m.Handle("GET /netz", s.need(store.RoleAdmin, s.network))
 	m.Handle("POST /netz/{vid}", s.need(store.RoleAdmin, s.toggleVLAN))
+	m.Handle("GET /netz/neu", s.need(store.RoleAdmin, s.vlanNewForm))
+	m.Handle("POST /netz/neu", s.need(store.RoleAdmin, s.vlanCreate))
+	m.Handle("GET /netz/{vid}/bearbeiten", s.need(store.RoleAdmin, s.vlanEditForm))
+	m.Handle("POST /netz/{vid}/bearbeiten", s.need(store.RoleAdmin, s.vlanUpdate))
+	m.Handle("POST /netz/{vid}/loeschen", s.need(store.RoleAdmin, s.vlanDelete))
+	m.Handle("POST /profil/neu", s.need(store.RoleAdmin, s.profileCreate))
+	m.Handle("POST /profil/{name}", s.need(store.RoleAdmin, s.profileSave))
+	m.Handle("POST /profil/{name}/loeschen", s.need(store.RoleAdmin, s.profileDelete))
+	m.Handle("POST /profil/{name}/standard", s.need(store.RoleAdmin, s.profileDefault))
+	m.Handle("POST /spiele/{id}/profil", s.need(store.RoleAdmin, s.gameProfile))
+	m.Handle("POST /profil/{name}/kante", s.need(store.RoleAdmin, s.profileEdge))
+	m.Handle("POST /profil/{name}/umbenennen", s.need(store.RoleAdmin, s.profileRename))
+	m.Handle("POST /spiele/{id}/verifikation", s.need(store.RoleOperator, s.verifyAdd))
+	m.Handle("POST /spiele/{id}/verifikation/{vid}/loeschen", s.need(store.RoleOperator, s.verifyDelete))
+	m.Handle("GET /spiele/{id}/export.yaml", s.need(store.RoleViewer, s.gameYAML))
+	m.Handle("GET /spiele/export.yaml", s.need(store.RoleViewer, s.changedGamesYAML))
+	m.Handle("GET /system/konfiguration.yaml", s.need(store.RoleAdmin, s.configYAML))
+	m.Handle("GET /system/monitoring", s.need(store.RoleAdmin, s.monitoringPage))
+	m.Handle("POST /system/monitoring/name", s.need(store.RoleAdmin, s.monitoringHost))
+	m.Handle("POST /system/monitoring/snmp", s.need(store.RoleAdmin, s.agentSave))
+	m.Handle("GET /system/monitoring/ziel/neu", s.need(store.RoleAdmin, s.targetNew))
+	m.Handle("GET /system/monitoring/mib", s.need(store.RoleViewer, s.mibFile))
+	m.Handle("GET /system/monitoring/ziel/{id}", s.need(store.RoleAdmin, s.targetEdit))
+	m.Handle("POST /system/monitoring/ziel", s.need(store.RoleAdmin, s.targetSave))
+	m.Handle("POST /system/monitoring/ziel/{id}/test", s.need(store.RoleAdmin, s.targetTest))
+	m.Handle("POST /system/monitoring/ziel/{id}/loeschen", s.need(store.RoleAdmin, s.targetDelete))
+	m.Handle("POST /system/syslog", s.need(store.RoleAdmin, s.syslogSet))
+	m.Handle("POST /system/dienste", s.need(store.RoleAdmin, s.serviceSet))
+	m.Handle("POST /system/dienste/{ip}/loeschen", s.need(store.RoleAdmin, s.serviceDelete))
+	m.Handle("POST /system/syslog/test", s.need(store.RoleAdmin, s.syslogTest))
 	m.Handle("GET /system", s.need(store.RoleAdmin, s.system))
 	m.Handle("POST /system/mode", s.need(store.RoleAdmin, s.setMode))
 	m.Handle("POST /system/notaus", s.need(store.RoleOperator, s.emergencyStop))
+	m.Handle("POST /system/wieder-an", s.need(store.RoleOperator, s.emergencyRelease))
 	m.Handle("POST /system/rollback/{id}", s.need(store.RoleAdmin, s.rollback))
 	m.Handle("GET /system/backup", s.need(store.RoleAdmin, s.downloadBackup))
 	m.Handle("GET /notaus", s.need(store.RoleOperator, s.emergencyConfirm))
@@ -154,7 +219,7 @@ func (s *Server) routes() {
 	m.Handle("POST /finder/stop", s.need(store.RoleOperator, s.finderStop))
 	m.Handle("GET /finder/mitschnitt.pcap", s.need(store.RoleOperator, s.finderPcap))
 	m.Handle("GET /finder/neu", s.need(store.RoleOperator, s.finderNewForm))
-	m.Handle("POST /finder/neu", s.need(store.RoleOperator, s.finderNewGame))
+	m.Handle("POST /finder/neu", s.need(store.RoleOperator, s.gameCreate))
 	m.Handle("GET /dev/komponenten", s.need(store.RoleViewer, s.components))
 	m.Handle("GET /api/v1/status", s.need(store.RoleViewer, s.apiStatus))
 	m.Handle("GET /api/v1/monitoring", s.monitorAuth(s.apiMonitoring))

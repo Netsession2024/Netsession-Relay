@@ -14,41 +14,42 @@
     <h2 id="status-h" data-live="state.headline">{{$l.State.Headline}}</h2>
     <p data-live="state.text">{{$l.State.Text}}</p>
   </div>
-  {{if $admin}}
+  {{if $op}}
   <div class="status-act" data-when="paused"{{if ne $l.State.Key "paused"}} hidden{{end}}>
-    <form method="post" action="/system/mode" data-confirm="Das Relay verteilt wieder Spiele zwischen den Netzen. Nur einschalten, wenn kein anderes Relay (OPNsense-Box) dieselben Ports weiterleitet." data-confirm-title="Relay wieder einschalten?" data-confirm-ok="Einschalten">
-      <input type="hidden" name="csrf" value="{{$csrf}}"><input type="hidden" name="back" value="/"><input type="hidden" name="mode" value="active">
-      <button class="btn" type="submit">Wieder einschalten</button>
-    </form>
-    <a href="/system">Andere Betriebsart</a>
-  </div>
-  <div class="status-act" data-when="observe none"{{if and (ne $l.State.Key "observe") (ne $l.State.Key "none")}} hidden{{end}}>
-    <a class="btn-outline" href="/system">Betriebsart ändern</a>
+    <a class="btn" href="/notaus">Wieder einschalten</a>
+    {{if $admin}}<a href="/system">Andere Betriebsart</a>{{end}}
   </div>
   {{else}}
   <div class="status-act" data-when="paused"{{if ne $l.State.Key "paused"}} hidden{{end}}>
-    <p class="small muted">Wieder einschalten kann ein Admin.</p>
+    <p class="small muted">Wieder einschalten: Operator oder Admin.</p>
+  </div>
+  {{end}}
+  {{if $admin}}
+  <div class="status-act" data-when="observe none"{{if and (ne $l.State.Key "observe") (ne $l.State.Key "none")}} hidden{{end}}>
+    <a class="btn-outline" href="/system">Betriebsart ändern</a>
   </div>
   {{end}}
 </section>
-<p class="notice notice-warn" id="needs-apply"{{if not $l.NeedsApply}} hidden{{end}}>{{icon "alert"}}<span>Die Engine läuft mit einem anderen Stand als die letzte Revision. {{if $admin}}Schau in den <a href="/verlauf">Verlauf</a>.{{end}}</span></p>
+<p class="note" data-tone="warn" id="needs-apply"{{if not $l.NeedsApply}} hidden{{end}}>{{icon "alert"}}<span class="note-body">Die Engine läuft mit einem anderen Stand als die letzte Revision. {{if $admin}}Schau in den <a href="/verlauf">Verlauf</a>.{{end}}</span></p>
 
 <section class="stats" aria-label="Kennzahlen">
-  <a class="stat" href="/spiele?filter=an"><b data-live="games_on">{{$l.GamesOn}}</b><span class="label">Spiele an</span><span class="stat-sub">von {{$l.GamesTotal}} · zur Liste</span></a>
+  <a class="stat" href="/spiele"><b data-live="games_on">{{$l.GamesOn}}</b><span class="label">Spiele an</span><span class="stat-sub">von {{$l.GamesTotal}} · zur Liste</span></a>
   <div class="stat"><b data-live="rx_per_s">{{num $l.RXRate}}</b><span class="label">Pakete/s rein</span><span class="stat-sub">gesamt <span class="mono" data-live="rx">{{num $l.RX}}</span></span></div>
-  <div class="stat"><b data-live="sent_per_s">{{num $l.SentRate}}</b><span class="label">Kopien/s raus</span><span class="stat-sub">gesamt <span class="mono" data-live="sent">{{num $l.Sent}}</span></span></div>
-  <a class="stat{{if $l.Alarms}} stat-alarm{{end}}" id="stat-alarm" href="#alarme"><b data-live="alarms.length">{{len $l.Alarms}}</b><span class="label">Alarme</span><span class="stat-sub" id="stat-alarm-sub">{{if $l.Alarms}}siehe unten{{else}}alles ruhig{{end}}</span></a>
+  <div class="stat"><b data-live="sent_per_s">{{num $l.SentRate}}</b><span class="label">Kopien/s raus</span><span class="stat-sub">eine Kopie je Zielnetz</span></div>
+  <a class="stat{{if $l.Alarms}} stat-alarm{{end}}" id="stat-alarm" href="#alarme"><b data-live="alarms.length">{{len $l.Alarms}}</b><span class="label">Alarme</span><span class="stat-sub" id="stat-alarm-sub">{{if $l.Alarms}}{{alarmNets $l.Alarms}}{{else}}alles ruhig{{end}}</span></a>
 </section>
 
 <section class="section" id="alarme" aria-labelledby="alarme-h">
   <h2 id="alarme-h">Alarme</h2>
   <ul class="alarms" id="alarms"{{if not $l.Alarms}} hidden{{end}}{{if $op}} data-can-ack{{end}}>
     {{range $l.Alarms}}
-    <li class="alarm">{{icon "alert"}}<div>
+    <li class="alarm note" data-tone="danger" id="alarm-{{.Kind}}" tabindex="-1">{{icon "alert"}}<div class="note-body">
       <p class="alarm-title"><b>{{.Title}}</b> <span class="alarm-meta">{{num .Count}}× · zuletzt {{ts .Last "time"}}</span></p>
       {{if .Hint}}<p>{{.Hint}}</p>{{end}}
-      <p class="small muted"><span class="mono">{{.Where}}</span></p>
-      <p class="small muted">{{.Detail}}</p>
+      {{if .Nets}}<p class="alarm-nets"><span class="label">Betrifft {{len .Nets}} {{if eq (len .Nets) 1}}Netz{{else}}Netze{{end}}</span>
+        {{range .Nets}}<a class="netchip" href="#netz-{{.VID}}"><span class="key key-sm" aria-hidden="true">{{.Key}}</span>{{.Name}}</a>{{end}}</p>{{end}}
+      {{if .Where}}<p class="small muted">Betrifft: <span class="mono">{{.Where}}</span></p>{{end}}
+      {{if .Detail}}<details class="fold"><summary><span class="label">Technische Details</span></summary><p class="small muted">{{.Detail}}</p></details>{{end}}
       {{if $op}}<form method="post" action="/alarme/{{.Kind}}/gesehen" class="ack-form"><input type="hidden" name="csrf" value="{{$csrf}}"><button class="btn-outline btn-sm" type="submit">{{icon "check"}}<span>Gesehen</span></button></form>{{end}}
     </div></li>
     {{end}}
@@ -56,47 +57,55 @@
   <details class="fold seen" id="seen-box"{{if not $l.Seen}} hidden{{end}}>
     <summary><span class="label">Gesehen, läuft noch (<span id="seen-count">{{len $l.Seen}}</span>)</span></summary>
     <ul class="alarms alarms-seen" id="alarms-seen">
-      {{range $l.Seen}}<li class="alarm alarm-seen">{{icon "check"}}<div><p class="alarm-title"><b>{{.Title}}</b> <span class="alarm-meta">{{num .Count}}× · zuletzt {{ts .Last "time"}}{{if .By}} · gesehen von {{.By}}{{end}}</span></p><p class="small muted"><span class="mono">{{.Where}}</span></p></div></li>{{end}}
+      {{range $l.Seen}}<li class="alarm note" data-tone="neutral" id="alarm-{{.Kind}}" tabindex="-1">{{icon "check"}}<div class="note-body">
+        <p class="alarm-title"><b>{{.Title}}</b> <span class="alarm-meta">{{num .Count}}× · zuletzt {{ts .Last "time"}}{{if .By}} · gesehen von {{.By}}{{end}}</span></p>
+        {{if .Nets}}<p class="alarm-nets"><span class="label">Betrifft {{len .Nets}} {{if eq (len .Nets) 1}}Netz{{else}}Netze{{end}}</span>
+          {{range .Nets}}<a class="netchip" href="#netz-{{.VID}}"><span class="key key-sm" aria-hidden="true">{{.Key}}</span>{{.Name}}</a>{{end}}</p>{{end}}
+        {{if .Where}}<p class="small muted">Betrifft: <span class="mono">{{.Where}}</span></p>{{end}}
+      </div></li>{{end}}
     </ul>
     <p class="small muted">Taucht ein gesehener Alarm nach mindestens einer Minute Ruhe wieder auf, ist er wieder offen.</p>
   </details>
-  <p class="quiet" id="alarms-empty"{{if $l.Alarms}} hidden{{end}}>{{icon "check"}}<span>Keine Alarme. Ruhige Halle.</span></p>
+  <p class="quiet" data-tone="ok" id="alarms-empty"{{if $l.Alarms}} hidden{{end}}>{{icon "check"}}<span>Keine Alarme. Ruhige Halle.</span></p>
 </section>
 
 <section class="section" aria-labelledby="netze-h">
   <div class="sechead">
     <h2 id="netze-h">Netze</h2>
-    <p class="legend" aria-hidden="true"><span><i class="dot dot-ok"></i>Verkehr</span><span><i class="dot dot-ring"></i>still</span><span><i class="dot dot-off"></i>aus</span></p>
+    <p class="legend" aria-hidden="true"><span><i class="dot dot-ok"></i>Verkehr</span><span><i class="dot dot-ring"></i>still</span><span><i class="dot dot-off"></i>aus</span><span>{{icon "alert"}}Alarm</span></p>
   </div>
   {{if $l.VLANs}}
-  <ul class="tiles">
+  <ul class="tiles" id="tiles">
     {{range $l.VLANs}}
-    <li class="tile" data-vlan="{{.VID}}" data-status="{{.Status}}" title="VLAN {{.VID}}">
-      <span class="key" aria-hidden="true">{{.Key}}</span>
-      <span class="tile-body">
-        <span class="tile-name">{{.Name}}<span class="sr">, VLAN {{.VID}}:</span></span>
-        <span class="tile-status"><i class="dot" aria-hidden="true"></i>{{icon "alert"}}<span data-f="status">{{.Status}}</span></span>
-        <span class="tile-rate"><b class="mono" data-f="rate">{{num .InRate}}</b><span class="unit">/s</span></span>
-      </span>
-      <span class="vbar" aria-hidden="true"><i></i></span>
+    <li class="tile" id="netz-{{.VID}}" data-vlan="{{.VID}}" data-status="{{.Status}}" tabindex="-1">
+      <a class="tile-link" href="{{if .AlarmKind}}#alarm-{{.AlarmKind}}{{else if $admin}}/netz#netz-{{.VID}}{{else}}#netz-{{.VID}}{{end}}" data-href="{{if $admin}}/netz#netz-{{.VID}}{{else}}#netz-{{.VID}}{{end}}">
+        <span class="key" aria-hidden="true">{{.Key}}</span>
+        <span class="tile-body">
+          <span class="tile-name">{{.Name}}<span class="sr">:</span></span>
+          <span class="tile-rate"><b class="mono" data-f="rate">{{num .InRate}}</b><span class="unit">/s</span></span>
+          <span class="tile-status"><i class="dot" aria-hidden="true"></i>{{icon "alert"}}<span data-f="label">{{.Label}}</span></span>
+          <span class="mono tile-vid"><span class="sr">VLAN </span>{{.VID}}</span>
+          <span class="tile-track" aria-hidden="true"><i></i></span>
+        </span>
+      </a>
     </li>
     {{end}}
   </ul>
-  <p class="small muted">Pakete pro Sekunde, die aus dem Netz beim Relay ankommen. Ein Tisch ohne Spieler:innen im LAN-Browser bleibt still.</p>
-  {{else}}<p class="muted">Noch kein Netz angelegt.</p>{{end}}
+  <p class="small muted">Pakete pro Sekunde, die aus dem Netz beim Relay ankommen. Ein Tisch ohne Spieler:innen im LAN-Browser bleibt still. Steht ein Alarm an der Kachel, führt sie zum Alarm.</p>
+  {{else}}<p class="quiet">{{icon "info"}}<span>Noch kein Netz angelegt.{{if $admin}} <a href="/netz/neu">Netz anlegen</a>{{end}}</span></p>{{end}}
 </section>
 
 <section class="section grid2 grid-wide">
   <div>
     <h2>Spiele mit Verkehr</h2>
     <div class="tablewrap"><table>
-      <thead><tr><th>Spiel</th><th class="col-opt">Port</th><th class="num">/s</th><th class="num">Empfangen</th><th class="num col-opt">Kopiert</th></tr></thead>
+      <thead><tr><th>Spiel</th><th class="col-opt">Port</th><th class="num">Pakete/s</th><th class="num">Empfangen</th><th class="num col-opt">Kopiert</th></tr></thead>
       <tbody data-rows="busy" data-cols="names,ports:mono col-opt,per_s:num mono,rx:num mono,relayed:num mono col-opt" data-empty="Bisher kam für kein eingeschaltetes Spiel etwas an.">
-        {{range $l.Busy}}<tr><td>{{.Names}}</td><td class="mono col-opt">{{.Ports}}</td><td class="num mono">{{num .Rate}}</td><td class="num mono">{{num .RX}}</td><td class="num mono col-opt">{{num .Relayed}}</td></tr>
+        {{range $l.Busy}}<tr><td title="{{.All}}">{{if .Game}}<a class="rowlink" href="/spiele/{{.Game}}">{{.Names}}</a>{{else}}{{.Names}}{{end}}</td><td class="mono col-opt">{{.Ports}}</td><td class="num mono">{{num .Rate}}</td><td class="num mono">{{num .RX}}</td><td class="num mono col-opt">{{num .Relayed}}</td></tr>
         {{else}}<tr><td colspan="5" class="muted">Bisher kam für kein eingeschaltetes Spiel etwas an.</td></tr>{{end}}
       </tbody>
     </table></div>
-    <p class="small muted">Suchanfragen seit dem Start der Engine. Teilen sich Spiele einen Port, stehen sie zusammen.</p>
+    <p class="small muted">Seit dem Start der Engine. „+2“ heißt: zwei weitere Spiele nutzen denselben Port. Wer gerade spielt, steht unter <a href="/spieler">Spieler</a>.</p>
   </div>
   <div>
     <h2>Unbekannte Ports</h2>
@@ -107,7 +116,7 @@
         {{else}}<tr><td colspan="2" class="muted">Bisher kein Broadcast auf einem unbekannten Port.</td></tr>{{end}}
       </tbody>
     </table></div>
-    <p class="small muted">Broadcasts ohne passendes Spiel. Ein Spiel, das fehlt, taucht hier zuerst auf.</p>
+    <p class="small muted">Broadcasts ohne passendes Spiel. Fehlt ein Spiel, taucht es hier zuerst auf.{{if $op}} Was dahintersteckt, zeigt der <a href="/finder#unbekannt">Port-Finder</a>.{{end}}</p>
   </div>
 </section>
 {{end}}

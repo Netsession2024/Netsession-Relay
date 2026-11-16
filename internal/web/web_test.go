@@ -13,8 +13,10 @@ import (
 	"net/netip"
 	"net/url"
 	"path/filepath"
+	"reflect"
 	"regexp"
 	"slices"
+	"strconv"
 	"strings"
 	"testing"
 	"time"
@@ -23,7 +25,10 @@ import (
 	"github.com/Netsession2024/Netsession-Relay/internal/compile"
 	"github.com/Netsession2024/Netsession-Relay/internal/control"
 	"github.com/Netsession2024/Netsession-Relay/internal/engineapi"
+	"github.com/Netsession2024/Netsession-Relay/internal/gamedb"
 	"github.com/Netsession2024/Netsession-Relay/internal/store"
+
+	"gopkg.in/yaml.v3"
 )
 
 type fakeEngine struct {
@@ -164,7 +169,7 @@ func TestPagesRender(t *testing.T) {
 	c, _ := e.client("admin")
 	for _, down := range []bool{false, true} {
 		e.eng.down = down
-		for _, p := range []string{"/", "/spiele", "/spiele/flatout2", "/spiele/flatout4", "/netz", "/system", "/verlauf", "/notaus", "/dev/komponenten", "/api/v1/status", "/spieler", "/spieler?teil=tabelle", "/finder", "/finder?teil=ergebnis", "/finder/neu?kind=multicast&group=239.1.2.3&port=5000"} {
+		for _, p := range []string{"/", "/spiele", "/spiele/flatout2", "/spiele/flatout4", "/netz", "/system", "/verlauf", "/notaus", "/dev/komponenten", "/api/v1/status", "/spieler", "/spieler?teil=tabelle", "/finder", "/finder?teil=ergebnis", "/finder/neu?kind=multicast&group=239.1.2.3&port=5000", "/netz/neu", "/netz/1101/bearbeiten", "/spiele/neu", "/spiele/flatout2/bearbeiten"} {
 			code, body := get(t, c, e.srv.URL+p)
 			if code != 200 {
 				t.Errorf("GET %s (engine down=%v) = %d: %.300s", p, down, code, body)
@@ -293,6 +298,329 @@ func TestAdminActions(t *testing.T) {
 	}
 }
 
+func TestVLANEdit(t *testing.T) {
+	e := setup(t)
+	ctx := context.Background()
+	admin, csrf := e.client("admin")
+	post := func(path string, v url.Values) (int, string) {
+		t.Helper()
+		v.Set("csrf", csrf)
+		r, err := admin.PostForm(e.srv.URL+path, v)
+		if err != nil {
+			t.Fatal(err)
+		}
+		defer r.Body.Close()
+		b, _ := io.ReadAll(r.Body)
+		return r.StatusCode, string(b)
+	}
+	form := func(vid, name, cidr, relay string) url.Values {
+		return url.Values{"vid": {vid}, "name": {name}, "group": {"tische"}, "cidr": {cidr}, "relay_ip": {relay},
+			"attach": {"trunk"}, "parent": {"trunk0"}, "enable": {"1"}}
+	}
+	if code, body := get(t, admin, e.srv.URL+"/netz/neu"); code != 200 || !strings.Contains(body, `value="trunk0"`) {
+		t.Fatalf("new form = %d, trunk not prefilled", code)
+	}
+	before := len(e.eng.applied)
+	if code, body := post("/netz/neu", form("1110", "Tisch 10", "10.10.10.0/24", "10.10.10.55")); code != 200 {
+		t.Fatalf("create = %d: %.300s", code, body)
+	}
+	if len(e.eng.applied) != before+1 || len(e.eng.applied[before].VLANs) != 5 {
+		t.Fatalf("create not applied with 5 VLANs")
+	}
+	if v, err := e.st.VLAN(ctx, 1110); err != nil || !v.Enabled || v.Parent != "trunk0" {
+		t.Fatalf("stored VLAN %+v, %v", v, err)
+	}
+	for _, c := range []struct {
+		f    url.Values
+		want string
+	}{
+		{form("1110", "Doppelt", "10.10.20.0/24", "10.10.20.55"), "gibt es schon"},
+		{form("1111", "Überlappt", "10.10.1.0/25", "10.10.1.55"), "überschneidet"},
+		{form("1111", "Falsche IP", "10.10.21.0/24", "10.10.22.55"), "liegt nicht in"},
+		{form("4095", "Zu groß", "10.10.21.0/24", "10.10.21.55"), "1 bis 4094"},
+		{form("1111", "Kein Trunk", "10.10.21.0/24", "10.10.21.55"), "Trunk-Interface"},
+	} {
+		if c.f.Get("name") == "Kein Trunk" {
+			c.f.Set("parent", "bad name!")
+		}
+		if code, body := post("/netz/neu", c.f); code != http.StatusUnprocessableEntity || !strings.Contains(body, c.want) {
+			t.Errorf("%s: %d, want %q", c.f.Get("name"), code, c.want)
+		}
+	}
+	if len(e.eng.applied) != before+1 {
+		t.Error("rejected forms were applied")
+	}
+	f := form("", "Tisch Zehn", "10.10.10.0/24", "10.10.10.60")
+	f.Set("rate_pps", "500")
+	if code, _ := post("/netz/1110/bearbeiten", f); code != 200 {
+		t.Fatalf("update = %d", code)
+	}
+	if v, _ := e.st.VLAN(ctx, 1110); v.Name != "Tisch Zehn" || v.RelayIP != "10.10.10.60" || v.RatePPS != 500 || !v.Enabled {
+		t.Errorf("updated VLAN %+v", v)
+	}
+	if code, _ := post("/netz/1110/loeschen", url.Values{}); code != 200 {
+		t.Fatalf("delete = %d", code)
+	}
+	if _, err := e.st.VLAN(ctx, 1110); err == nil {
+		t.Error("VLAN still there after delete")
+	}
+	if last := e.eng.applied[len(e.eng.applied)-1]; len(last.VLANs) != 4 {
+		t.Errorf("after delete %d VLANs applied", len(last.VLANs))
+	}
+	audit, _ := e.st.AuditLog(ctx, 50)
+	var seen []string
+	for _, a := range audit {
+		if strings.HasPrefix(a.Action, "vlan.") {
+			seen = append(seen, a.Action)
+		}
+	}
+	if !slices.Contains(seen, "vlan.create") || !slices.Contains(seen, "vlan.update") || !slices.Contains(seen, "vlan.delete") {
+		t.Errorf("audit: %v", seen)
+	}
+	op, _ := e.client("op")
+	if code, _ := get(t, op, e.srv.URL+"/netz/neu"); code != http.StatusForbidden {
+		t.Errorf("operator new-network form = %d", code)
+	}
+}
+
+func TestGameEdit(t *testing.T) {
+	e := setup(t)
+	ctx := context.Background()
+	op, csrf := e.client("op")
+	post := func(path string, v url.Values) (int, string, string) {
+		t.Helper()
+		v.Set("csrf", csrf)
+		r, err := op.PostForm(e.srv.URL+path, v)
+		if err != nil {
+			t.Fatal(err)
+		}
+		defer r.Body.Close()
+		b, _ := io.ReadAll(r.Body)
+		return r.StatusCode, r.Request.URL.Path, string(b)
+	}
+	// create with two rows (broadcast + multicast), the empty third row is ignored
+	f := url.Values{"name": {"Mein Spiel"}, "aliases": {"MS, Mein"}, "confidence": {"medium"}, "category": {"game"},
+		"kind0": {"broadcast"}, "ports0": {"41000-41002"}, "direction0": {"query"},
+		"kind1": {"multicast"}, "ports1": {"41010"}, "group1": {"239.9.9.9"}, "direction1": {"both"},
+		"kind2": {"broadcast"}, "ports2": {""}, "direction2": {"both"}, "enable": {"1"}}
+	if code, path, body := post("/spiele/neu", f); code != 200 || path != "/spiele/mein_spiel" {
+		t.Fatalf("create = %d %s: %.300s", code, path, body)
+	}
+	g, err := e.st.Game(ctx, "mein_spiel")
+	if err != nil || g.Origin != "custom" || !g.Enabled || len(g.Discovery) != 2 || g.Discovery[1].Group != "239.9.9.9" || len(g.Aliases) != 2 {
+		t.Fatalf("stored %+v, %v", g, err)
+	}
+	if code, _, body := post("/spiele/neu", url.Values{"name": {"Ohne Port"}, "kind0": {"broadcast"}, "ports0": {""}}); code != 422 || !strings.Contains(body, "mindestens einen") {
+		t.Errorf("no port = %d", code)
+	}
+	if code, _, body := post("/spiele/neu", url.Values{"name": {"DHCP"}, "kind0": {"broadcast"}, "ports0": {"67"}}); code != 422 || !strings.Contains(body, "DHCP") {
+		t.Errorf("dhcp = %d", code)
+	}
+	// edit a seed game: advanced fields survive, game becomes locally modified
+	before, _ := e.st.Game(ctx, "flatout2")
+	_, form := get(t, op, e.srv.URL+"/spiele/flatout2/bearbeiten")
+	if !strings.Contains(form, before.Discovery[0].Ports) {
+		t.Fatal("edit form without the ports")
+	}
+	ef := url.Values{"name": {"FlatOut 2 (geändert)"}, "confidence": {before.Confidence}, "category": {before.Category}}
+	for i, sp := range before.Discovery {
+		k := strconv.Itoa(i)
+		adv := sp
+		adv.Kind, adv.Ports, adv.Group, adv.Direction = "", "", "", ""
+		a := ""
+		if adv != (gamedb.Spec{}) {
+			b, _ := json.Marshal(adv)
+			a = string(b)
+		}
+		ef.Set("kind"+k, sp.Kind)
+		ef.Set("ports"+k, sp.Ports)
+		ef.Set("group"+k, sp.Group)
+		ef.Set("direction"+k, sp.Direction)
+		ef.Set("adv"+k, a)
+	}
+	if code, path, _ := post("/spiele/flatout2/bearbeiten", ef); code != 200 || path != "/spiele/flatout2" {
+		t.Fatalf("edit = %d %s", code, path)
+	}
+	after, _ := e.st.Game(ctx, "flatout2")
+	if after.Name != "FlatOut 2 (geändert)" || !after.LocallyModified || !reflect.DeepEqual(after.Discovery, before.Discovery) {
+		t.Errorf("after edit: %+v", after)
+	}
+	// delete: seed refused, custom ok
+	if _, _, body := post("/spiele/flatout2/loeschen", url.Values{}); !strings.Contains(body, "nur ausschalten") {
+		t.Error("seed game delete not refused")
+	}
+	post("/spiele/mein_spiel/loeschen", url.Values{})
+	if _, err := e.st.Game(ctx, "mein_spiel"); err == nil {
+		t.Error("custom game not deleted")
+	}
+	view, _ := e.client("view")
+	if code, _ := get(t, view, e.srv.URL+"/spiele/neu"); code != http.StatusForbidden {
+		t.Errorf("viewer new game = %d", code)
+	}
+}
+
+func TestEmergencyRelease(t *testing.T) {
+	e := setup(t)
+	ctx := context.Background()
+	op, csrf := e.client("op")
+	post := func(path string) string {
+		t.Helper()
+		r, err := op.PostForm(e.srv.URL+path, url.Values{"csrf": {csrf}})
+		if err != nil {
+			t.Fatal(err)
+		}
+		defer r.Body.Close()
+		return r.Request.URL.RawQuery
+	}
+	_ = e.st.SetMode(ctx, "test", "observe")
+	if q := post("/system/wieder-an"); !strings.Contains(q, "fehler") {
+		t.Error("release without emergency stop accepted")
+	}
+	post("/system/notaus")
+	if m, _ := e.st.Setting(ctx, store.SettingMode, ""); m != "paused" {
+		t.Fatalf("mode after stop = %s", m)
+	}
+	if _, page := get(t, op, e.srv.URL+"/notaus"); !strings.Contains(page, "Relay wieder einschalten") {
+		t.Error("notaus page without release button")
+	}
+	post("/system/wieder-an")
+	if m, _ := e.st.Setting(ctx, store.SettingMode, ""); m != "observe" {
+		t.Errorf("mode after release = %s, want observe", m)
+	}
+	if last := e.eng.applied[len(e.eng.applied)-1]; last.Mode != "observe" {
+		t.Errorf("applied mode %s", last.Mode)
+	}
+	if q := post("/system/wieder-an"); !strings.Contains(q, "fehler") {
+		t.Error("second release accepted")
+	}
+}
+
+func TestProfileEdit(t *testing.T) {
+	e := setup(t)
+	ctx := context.Background()
+	admin, csrf := e.client("admin")
+	post := func(path string, v url.Values) string {
+		t.Helper()
+		v.Set("csrf", csrf)
+		r, err := admin.PostForm(e.srv.URL+path, v)
+		if err != nil {
+			t.Fatal(err)
+		}
+		defer r.Body.Close()
+		return r.Request.URL.RawQuery
+	}
+	c, _ := e.st.ExportConfig(ctx)
+	def := ""
+	for _, p := range c.Profiles {
+		if p.Default {
+			def = p.Name
+		}
+	}
+	if def == "" {
+		t.Fatal("no default profile in the lab preset")
+	}
+	if _, page := get(t, admin, e.srv.URL+"/netz"); !strings.Contains(page, `action="/profil/`+def+`"`) || !strings.Contains(page, `name="e"`) {
+		t.Fatal("network page without editable matrix")
+	}
+	// new profile as a copy, then only tische -> tische
+	if q := post("/profil/neu", url.Values{"name": {"nur-tische"}, "copy": {def}}); strings.Contains(q, "fehler") {
+		t.Fatalf("create: %s", q)
+	}
+	post("/profil/nur-tische", url.Values{"e": {"tische>tische"}})
+	c, _ = e.st.ExportConfig(ctx)
+	var edges []compile.Edge
+	for _, p := range c.Profiles {
+		if p.Name == "nur-tische" {
+			edges = p.Edges
+		}
+	}
+	if len(edges) != 1 || edges[0] != (compile.Edge{Src: "tische", Dst: "tische"}) {
+		t.Fatalf("edges %v", edges)
+	}
+	// game uses it, then default switch, delete of the default refused, delete of the other ok
+	games, _ := e.st.Games(ctx)
+	var on string
+	for _, g := range games {
+		if g.Enabled {
+			on = g.ID
+			break
+		}
+	}
+	post("/spiele/"+on+"/profil", url.Values{"profile": {"nur-tische"}})
+	c, _ = e.st.ExportConfig(ctx)
+	for _, g := range c.Games {
+		if g.ID == on && g.FlowProfile != "nur-tische" {
+			t.Errorf("game profile %q", g.FlowProfile)
+		}
+	}
+	if q := post("/profil/nur-tische/standard", url.Values{}); strings.Contains(q, "fehler") {
+		t.Fatalf("default: %s", q)
+	}
+	if q := post("/profil/nur-tische/loeschen", url.Values{}); !strings.Contains(q, "fehler") {
+		t.Error("default profile deleted")
+	}
+	post("/profil/"+def+"/standard", url.Values{})
+	post("/profil/nur-tische/loeschen", url.Values{})
+	c, _ = e.st.ExportConfig(ctx)
+	for _, g := range c.Games {
+		if g.ID == on && g.FlowProfile != "" {
+			t.Errorf("game keeps deleted profile %q", g.FlowProfile)
+		}
+	}
+	if len(c.Profiles) != 1 {
+		t.Errorf("%d profiles left", len(c.Profiles))
+	}
+}
+
+func TestVerificationAndExports(t *testing.T) {
+	e := setup(t)
+	ctx := context.Background()
+	op, csrf := e.client("op")
+	r, _ := op.PostForm(e.srv.URL+"/spiele/flatout2/verifikation", url.Values{"csrf": {csrf}, "result": {"works"}, "variant": {"Steam"}, "note": {"Tisch 1 nach 2"}})
+	r.Body.Close()
+	r, _ = op.PostForm(e.srv.URL+"/spiele/flatout2/verifikation", url.Values{"csrf": {csrf}, "result": {"kaputt"}})
+	r.Body.Close()
+	if !strings.Contains(r.Request.URL.RawQuery, "fehler") {
+		t.Error("invalid result accepted")
+	}
+	vs, _ := e.st.Verifications(ctx, "flatout2")
+	if len(vs) != 1 || vs[0].Variant != "Steam" || vs[0].User != "op" || vs[0].Event == "" {
+		t.Fatalf("verifications %+v", vs)
+	}
+	if _, page := get(t, op, e.srv.URL+"/spiele/flatout2"); !strings.Contains(page, "Tisch 1 nach 2") {
+		t.Error("game page without verification")
+	}
+	// one game as YAML in seed format: loads with the strict seed loader
+	code, body := get(t, op, e.srv.URL+"/spiele/flatout2/export.yaml")
+	if code != 200 || !strings.Contains(body, "# verified ") || !strings.Contains(body, "Steam") {
+		t.Fatalf("game yaml = %d: %.300s", code, body)
+	}
+	if _, err := gamedb.Load(strings.NewReader(body)); err != nil {
+		t.Errorf("exported game does not load as seed: %v", err)
+	}
+	// changed games: only the verified one (lab preset has no own games)
+	_, body = get(t, op, e.srv.URL+"/spiele/export.yaml")
+	if db, err := gamedb.Load(strings.NewReader(body)); err != nil || len(db.Games) != 1 {
+		t.Errorf("changed games export: %v", err)
+	}
+	// configuration YAML round trip (admin only)
+	if code, _ := get(t, op, e.srv.URL+"/system/konfiguration.yaml"); code != http.StatusForbidden {
+		t.Errorf("operator config export = %d", code)
+	}
+	admin, _ := e.client("admin")
+	_, body = get(t, admin, e.srv.URL+"/system/konfiguration.yaml")
+	var c store.Config
+	dec := yaml.NewDecoder(strings.NewReader(body))
+	dec.KnownFields(true)
+	if err := dec.Decode(&c); err != nil {
+		t.Fatal(err)
+	}
+	want, _ := e.st.ExportConfig(ctx)
+	if !reflect.DeepEqual(c, want) {
+		t.Errorf("yaml round trip differs:\n%+v\n%+v", c, want)
+	}
+}
+
 // Brand rule 2 (docs/02-plan.md 6.4): own CSS uses tokens only, no colour literals.
 func TestCSSUsesTokensOnly(t *testing.T) {
 	css, err := fs.ReadFile(staticFS, "static/app.css")
@@ -301,6 +629,12 @@ func TestCSSUsesTokensOnly(t *testing.T) {
 	}
 	if m := regexp.MustCompile(`#[0-9a-fA-F]{3,8}\b|rgba?\(|hsla?\(`).FindAll(css, -1); len(m) > 0 {
 		t.Errorf("app.css contains colour literals: %q", m)
+	}
+	// A box has the same border on all sides. A status colour on one edge of a rounded box renders as a curved
+	// bracket, the generic look the owner rejected (2026-11-16); an inset shadow is the same stripe in disguise.
+	stripe := regexp.MustCompile(`border-(left|right|top|bottom)(-color)?:[^;}]*(status|red-|--tone)|inset -?[0-9]+px 0 0`)
+	if m := stripe.FindAll(css, -1); len(m) > 0 {
+		t.Errorf("app.css colours a single edge of a box: %q", m)
 	}
 	for _, banned := range []string{"backdrop-filter", "font-family: system-ui", "-apple-system"} {
 		if strings.Contains(string(css), banned) {
@@ -375,7 +709,7 @@ func TestMonitoring(t *testing.T) {
 		t.Fatalf("without configured token = %d, want 404", code)
 	}
 	admin, csrf := e.client("admin")
-	if _, body := get(t, admin, e.srv.URL+"/system"); !strings.Contains(body, "noch keins") {
+	if _, body := get(t, admin, e.srv.URL+"/system"); !strings.Contains(body, "noch keiner") {
 		t.Error("system page does not say that no token exists")
 	}
 	op, opcsrf := e.client("op")

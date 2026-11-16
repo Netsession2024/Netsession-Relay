@@ -1,0 +1,121 @@
+{{define "content"}}
+{{$csrf := .CSRF}}{{$d := .Data}}
+<p class="crumbs"><a href="/system">{{icon "back"}}System</a></p>
+<div class="pagehead">
+  <div>
+    <span class="bar"></span>
+    <h1>Relay-<em>Monitoring</em></h1>
+    <p class="lead">Wer Werte beim Relay abholt, und wohin das Relay Alarme und Änderungen schickt.</p>
+  </div>
+  <a class="btn" href="/system/monitoring/ziel/neu">{{icon "plus"}}<span>Ziel hinzufügen</span></a>
+</div>
+
+<div class="section-first grid2">
+  <section class="panel" aria-labelledby="pull-h">
+    <h2 id="pull-h">Abrufen</h2>
+    <h3>Zabbix, Prometheus</h3>
+    <p class="small muted">Beide holen die Werte ab und brauchen den Token.</p>
+    {{with $d.NewToken}}
+    <div class="note" data-tone="warn" role="status">{{icon "alert"}}<div class="note-body">
+      <p><b>Neuer Token. Er wird nur jetzt angezeigt.</b> In Zabbix als Makro <span class="mono">{$NSRELAY.TOKEN}</span> eintragen. Der alte Token gilt ab sofort nicht mehr.</p>
+      <p class="tokenline"><code class="mono token" id="monitor-token">{{.}}</code><button class="btn-outline btn-sm" type="button" data-copy="monitor-token" data-copy-done="Token kopiert." hidden>Kopieren</button></p>
+    </div></div>
+    {{end}}
+    <dl class="facts">
+      <dt>Token</dt><dd>{{if $d.MonitorSet}}<span class="flag" data-tone="ok">{{icon "check"}}eingerichtet</span>{{else}}<span class="flag">noch keiner</span> <span class="small muted">· die Endpunkte sind aus</span>{{end}}</dd>
+      <dt>Zabbix</dt><dd class="mono">/api/v1/monitoring</dd>
+      <dt>Prometheus</dt><dd class="mono">/metrics</dd>
+      <dt>Header</dt><dd class="mono">Authorization: Bearer &lt;Token&gt;</dd>
+      <dt>Vorlage</dt><dd>im Repo unter <span class="mono">deploy/zabbix/</span></dd>
+    </dl>
+    <form method="post" action="/system/monitoring-token" class="actions"{{if $d.MonitorSet}} data-confirm="Der bisherige Token gilt sofort nicht mehr. Zabbix bekommt keine Werte, bis der neue Token eingetragen ist." data-confirm-title="Neuen Token erzeugen?" data-confirm-ok="Erzeugen"{{end}}>
+      <input type="hidden" name="csrf" value="{{$csrf}}">
+      <button class="btn-outline" type="submit">{{if $d.MonitorSet}}Neuen Token erzeugen{{else}}Token erzeugen{{end}}</button>
+    </form>
+    {{$a := $d.Agent}}
+    <h3 id="snmp">SNMP</h3>
+    <p class="small muted">Abfragen per SNMP v3 (verschlüsselt) oder v2c, nur lesend. <a href="/system/monitoring/mib">MIB laden</a> · vorläufige Unternehmensnummer 32473.</p>
+    <dl class="facts">
+      <dt>Agent</dt><dd>{{if $a.Running}}<span class="flag" data-tone="ok">{{icon "check"}}läuft</span> <span class="mono">{{$a.Listen}}</span>{{else if $a.Err}}<span class="flag" data-tone="danger">{{icon "alert"}}Fehler</span>{{else}}<span class="flag">aus</span>{{end}}</dd>
+    </dl>
+    {{with $a.Err}}<p class="note" data-tone="danger">{{icon "alert"}}<span class="note-body">{{.}}</span></p>{{end}}
+    <details class="fold"{{if or $a.Err (not $a.S.Enabled)}}{{else}}{{end}}>
+      <summary><span class="label">SNMP einrichten</span></summary>
+      <form method="post" action="/system/monitoring/snmp" class="form">
+        <input type="hidden" name="csrf" value="{{$csrf}}">
+        <label class="radio"><input type="checkbox" name="enabled" value="1"{{if $a.S.Enabled}} checked{{end}}><span>Agent an <span class="small muted">(lauscht nur auf {{if $a.HostValid}}<span class="mono">{{$a.Host}}</span>{{else}}der MGMT-Adresse{{end}})</span></span></label>
+        <div class="field"><label class="label" for="snmp-port">Port</label>
+          <input id="snmp-port" name="port" type="number" min="1" max="65535" value="{{$a.S.Port}}" class="mono"></div>
+        <div class="field"><label class="label" for="snmp-user">v3-Benutzer</label>
+          <input id="snmp-user" name="user" value="{{$a.S.User}}" autocomplete="off" spellcheck="false" placeholder="zabbix"></div>
+        <div class="field"><label class="label" for="snmp-auth">Authentifizierung</label>
+          <select id="snmp-auth" name="auth_proto">{{range $p := (list "sha256" "sha512" "sha")}}<option value="{{$p}}"{{if eq $p $a.S.AuthProto}} selected{{end}}>{{upper $p}}</option>{{end}}</select></div>
+        <div class="field"><label class="label" for="snmp-authpass">Auth-Passwort (geheim, mind. 8 Zeichen)</label>
+          <input id="snmp-authpass" name="auth_pass" type="password" autocomplete="new-password" placeholder="{{if $a.AuthSet}}gesetzt, leer lassen = unverändert{{end}}"></div>
+        <div class="field"><label class="label" for="snmp-priv">Verschlüsselung</label>
+          <select id="snmp-priv" name="priv_proto">{{range $p := (list "aes128" "aes256")}}<option value="{{$p}}"{{if eq $p $a.S.PrivProto}} selected{{end}}>{{upper $p}}</option>{{end}}</select></div>
+        <div class="field"><label class="label" for="snmp-privpass">Priv-Passwort (geheim, mind. 8 Zeichen)</label>
+          <input id="snmp-privpass" name="priv_pass" type="password" autocomplete="new-password" placeholder="{{if $a.PrivSet}}gesetzt, leer lassen = unverändert{{end}}"></div>
+        <label class="radio"><input type="checkbox" name="v2c" value="1"{{if $a.S.V2c}} checked{{end}}><span>Auch v2c <span class="small muted">(unverschlüsselt, Community geht im Klartext übers Netz)</span></span></label>
+        <div class="field"><label class="label" for="snmp-comm">Community für v2c (geheim)</label>
+          <input id="snmp-comm" name="community" type="password" autocomplete="new-password" placeholder="{{if $a.CommunitySet}}gesetzt, leer lassen = unverändert{{end}}"></div>
+        <div class="field"><label class="label" for="snmp-allow">Erlaubte Absender (optional)</label>
+          <input id="snmp-allow" name="allow" value="{{$a.Allow}}" class="mono" placeholder="192.0.2.10, 192.0.2.0/24" autocomplete="off" spellcheck="false" aria-describedby="snmp-allow-hint">
+          <p class="hint" id="snmp-allow-hint">Leer: jede Adresse im MGMT-Netz. Andere bekommen keine Antwort.</p></div>
+        <div class="field"><label class="label" for="snmp-contact">Kontakt (sysContact)</label>
+          <input id="snmp-contact" name="contact" value="{{$a.S.Contact}}" autocomplete="off"></div>
+        <div class="field"><label class="label" for="snmp-loc">Ort (sysLocation)</label>
+          <input id="snmp-loc" name="location" value="{{$a.S.Location}}" autocomplete="off"></div>
+        <div class="actions"><button class="btn-outline" type="submit">SNMP speichern</button></div>
+      </form>
+    </details>
+  </section>
+
+  <section class="panel" aria-labelledby="name-h">
+    <h2 id="name-h">Name dieses Relays</h2>
+    <p class="small muted">Steht in jeder Meldung (Syslog-Hostname, OpenTelemetry <span class="mono">host.name</span>). Genau so, wie der Host im Monitoring heißt.</p>
+    <form method="post" action="/system/monitoring/name" class="form">
+      <input type="hidden" name="csrf" value="{{$csrf}}">
+      <div class="field"><label class="label" for="host">Name</label>
+        <input id="host" name="host" value="{{$d.Host}}" class="mono" maxlength="64" placeholder="{{$d.HostDefault}}" autocomplete="off" spellcheck="false" aria-describedby="host-hint">
+        <p class="hint" id="host-hint">Leer: Hostname der VM ({{$d.HostDefault}}).</p></div>
+      <div class="actions"><button class="btn-outline" type="submit">Speichern</button></div>
+    </form>
+  </section>
+</div>
+
+<section class="section" aria-labelledby="push-h">
+  <div class="sechead">
+    <h2 id="push-h">Senden</h2>
+    <p class="small muted">{{len $d.Targets}} von höchstens {{$d.Max}} Zielen{{if $d.Failing}} · <span class="flag" data-tone="danger">{{icon "alert"}}{{$d.Failing}} mit Fehler</span>{{end}}</p>
+  </div>
+  {{if $d.Targets}}
+  <div class="tablewrap"><table class="stack targets">
+    <thead><tr><th>Ziel</th><th>Adresse</th><th>Was</th><th>Zuletzt gesendet</th><th>Status</th><th><span class="sr">Aktionen</span></th></tr></thead>
+    <tbody>
+      {{range $d.Targets}}
+      <tr>
+        <td data-label="Ziel"><b>{{.Name}}</b><br><span class="small muted">{{.KindName}}</span></td>
+        <td data-label="Adresse"><span class="mono">{{.Endpoint}}</span><br><span class="small muted">{{.Summary}}</span></td>
+        <td data-label="Was">{{.What}}</td>
+        <td data-label="Zuletzt gesendet">{{if .LastOK}}{{.LastOK}}{{else}}<span class="muted">noch nie</span>{{end}}</td>
+        <td data-label="Status">
+          {{if not .Enabled}}<span class="flag">aus</span>
+          {{else if eq .Status.State "error"}}<span class="flag" data-tone="danger">{{icon "alert"}}Fehler</span>
+          {{else if eq .Status.State "unconfirmed"}}<span class="flag" data-tone="ok">{{icon "check"}}läuft</span> <span class="small muted">ohne Bestätigung</span>
+          {{else if eq .Status.State "ok"}}<span class="flag" data-tone="ok">{{icon "check"}}läuft</span>
+          {{else}}<span class="flag">wartet</span>{{end}}
+        </td>
+        <td class="targets-act">
+          {{if .Enabled}}<form method="post" action="/system/monitoring/ziel/{{.ID}}/test"><input type="hidden" name="csrf" value="{{$csrf}}"><button class="btn-outline btn-sm" type="submit">Testen</button></form>{{end}}
+          <a class="btn-outline btn-sm" href="/system/monitoring/ziel/{{.ID}}">Bearbeiten</a>
+          <form method="post" action="/system/monitoring/ziel/{{.ID}}/loeschen" data-confirm="{{.Name}} bekommt ab sofort keine Meldungen mehr." data-confirm-title="Ziel löschen?" data-confirm-ok="Löschen"><input type="hidden" name="csrf" value="{{$csrf}}"><button class="btn-link" type="submit">Löschen</button></form>
+        </td>
+      </tr>
+      {{if .LastErr}}<tr class="targets-err"><td colspan="6"><p class="note" data-tone="{{if eq .Status.State "error"}}danger{{else}}warn{{end}}">{{icon "alert"}}<span class="note-body">Letzter Fehler: {{.LastErr}}{{if .Status.Dropped}} · {{.Status.Dropped}} Meldungen verworfen{{end}}</span></p></td></tr>{{end}}
+      {{end}}
+    </tbody>
+  </table></div>
+  {{else}}<p class="quiet">{{icon "info"}}<span>Noch kein Ziel. Alarme und Änderungen bleiben im Relay.</span></p>{{end}}
+</section>
+{{end}}

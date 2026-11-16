@@ -31,7 +31,7 @@
     var t = $("toast");
     if (!t) return;
     $("toast-text").textContent = text;
-    t.className = "toast" + (kind ? " toast-" + kind : "");
+    t.dataset.tone = kind || "ok";
     var use = t.querySelector("#toast-icon use");
     if (use) use.setAttribute("href", "/static/icons.svg#i-" + (kind ? "alert" : "check"));
     t.hidden = false;
@@ -53,7 +53,7 @@
     dlg.showModal();
     $("confirm-cancel").focus();
   }
-  var stopLink = $("stop-link"), stopForm = $("stop-form");
+  var stopLink = $("stop-link"), stopForm = $("stop-form"), resumeLink = $("resume-link");
   if (stopLink && stopForm) {
     stopLink.addEventListener("click", function (e) {
       e.preventDefault();
@@ -77,6 +77,46 @@
       if (e.key === "Escape" && account.open) { account.open = false; account.querySelector("summary").focus(); }
     });
   }
+
+  // "+2" pop-ups: one open at a time, close on outside click and Esc
+  doc.addEventListener("click", function (e) {
+    all("details.more[open]").forEach(function (m) { if (!m.contains(e.target)) m.open = false; });
+  });
+  doc.addEventListener("keydown", function (e) {
+    if (e.key === "Tab") doc.documentElement.classList.add("kbd"); // focus rings on the login form only after the keyboard was used
+    if (e.key !== "Escape") return;
+    all("details.more[open]").forEach(function (m) { m.open = false; if (m.contains(doc.activeElement)) m.querySelector("summary").focus(); });
+  });
+
+  // links to a tile or an alarm card on the same page: open a folded parent, move focus there, say what it is
+  function goTarget(id, say) {
+    var t = $(id);
+    if (!t) return;
+    for (var n = t.parentNode; n && n !== doc; n = n.parentNode) if (n.tagName === "DETAILS") n.open = true;
+    if (t.hasAttribute("tabindex")) t.focus({ preventScroll: true });
+    t.scrollIntoView({ block: "center" });
+    if (say) {
+      var name = t.querySelector(".alarm-title b, .tile-name");
+      if (name) announce(name.textContent.trim());
+    }
+  }
+  doc.addEventListener("click", function (e) {
+    var a = e.target.closest ? e.target.closest('a[href^="#netz-"], a[href^="#alarm-"]') : null;
+    if (!a) return;
+    var id = a.getAttribute("href").slice(1);
+    if (!$(id)) return;
+    e.preventDefault();
+    history.replaceState(null, "", "#" + id);
+    // :target only follows real navigation; mark the target ourselves
+    all(".is-target").forEach(function (x) { x.classList.remove("is-target"); });
+    $(id).classList.add("is-target");
+    goTarget(id, true);
+  });
+  if (location.hash.length > 1 && /^#[\w-]+$/.test(location.hash)) setTimeout(function () { goTarget(location.hash.slice(1)); }, 0);
+
+  // the navigation scrolls sideways on phones: bring the current entry into view
+  var navNow = doc.querySelector('.nav a[aria-current="page"]');
+  if (navNow && navNow.scrollIntoView && window.innerWidth < 1024) navNow.scrollIntoView({ inline: "center", block: "nearest" });
 
   // ---- switches: apply without reloading the page ----
   function setSwitch(f, on) {
@@ -119,6 +159,45 @@
     });
   });
 
+  // ---- profile matrix: with JavaScript a tick applies at once (one edge), the save button is for the form without it ----
+  all("form[data-edge]").forEach(function (f) {
+    var save = f.querySelector("[data-save]");
+    if (save) save.hidden = true;
+    var note = f.querySelector("[data-live-note]");
+    if (note) note.hidden = false;
+    f.addEventListener("change", function (e) {
+      var box = e.target;
+      if (!box || box.name !== "e") return;
+      var parts = box.value.split(">"), cell = box.closest(".cell"), want = box.checked;
+      var run = function () {
+        var fd = new FormData();
+        fd.append("csrf", csrf); fd.append("src", parts[0]); fd.append("dst", parts[1]); fd.append("on", want ? "1" : "0");
+        if (cell) cell.classList.add("busy");
+        fetch(f.dataset.edge, { method: "POST", headers: { "Accept": "application/json", "X-CSRF-Token": csrf }, body: fd, credentials: "same-origin" })
+          .then(function (r) { return r.json(); }).then(function (a) {
+            if (a.error) { box.checked = !want; toast(a.error, "danger"); return; }
+            if (a.warnings && a.warnings.length) toast((a.message || "Angewendet.") + " Hinweis: " + a.warnings.join(" · "), "warn");
+            else toast(a.message || "Angewendet.");
+          }).catch(function () {
+            box.checked = !want;
+            toast("Keine Antwort vom Relay-Server. Der Haken wurde nicht geändert.", "danger");
+          }).then(function () { if (cell) cell.classList.remove("busy"); });
+      };
+      // opening the games to WiFi or the crew network is worth a second look
+      if (want && box.dataset.ask) {
+        box.checked = false;
+        confirmBox({ confirmTitle: box.dataset.askTitle, confirm: box.dataset.ask, confirmOk: "Einschalten" }, function () { box.checked = true; run(); });
+      } else run();
+    });
+  });
+
+  // a select that saves on change (profile of a game); the button stays for the form without JavaScript
+  all("form[data-autosubmit]").forEach(function (f) {
+    var btn = f.querySelector("button[type=submit]");
+    if (btn) btn.hidden = true;
+    f.addEventListener("change", function () { f.submit(); });
+  });
+
   // ---- pages with a server-rendered fragment that refreshes every 5 s (players, port finder) ----
   // The swap must not disturb someone reading: opened <details data-key> stay open, keyboard focus stays
   // on the same link or summary, and nothing is replaced while text inside is selected (copying bytes).
@@ -155,80 +234,119 @@
     }, 5000);
   });
 
-  // ---- copy button (monitoring token); hidden without JavaScript, the text is selectable anyway ----
+  // ---- copy button (monitoring token); hidden without JavaScript, the text is selectable anyway.
+  //      The UI runs on plain HTTP in the MGMT network, where browsers block navigator.clipboard (secure
+  //      context only). Fallback: a temporary textarea + execCommand("copy"), which still works there inside
+  //      a click. Only if both fail is the text just selected. ----
   all("[data-copy]").forEach(function (btn) {
     var src = $(btn.dataset.copy);
     if (!src) return;
     btn.hidden = false;
     btn.addEventListener("click", function () {
+      var text = src.textContent.trim();
+      var done = function () { toast(btn.dataset.copyDone || "Kopiert."); };
       var mark = function () {
         var r = doc.createRange();
         r.selectNodeContents(src);
         var s = window.getSelection();
         s.removeAllRanges();
         s.addRange(r);
-        toast("Markiert. Jetzt mit Strg+C kopieren.", "warn");
+        toast("Kopieren ging nicht. Der Text ist markiert: Strg+C drücken.", "warn");
+      };
+      var legacy = function () {
+        var ta = doc.createElement("textarea");
+        ta.value = text;
+        ta.setAttribute("readonly", "");
+        ta.style.position = "fixed";
+        ta.style.top = "0";
+        ta.style.left = "0";
+        ta.style.opacity = "0";
+        doc.body.appendChild(ta);
+        ta.focus();
+        ta.select();
+        var ok = false;
+        try { ok = doc.execCommand("copy"); } catch (e) { ok = false; }
+        doc.body.removeChild(ta);
+        btn.focus();
+        if (ok) done(); else mark();
       };
       if (navigator.clipboard && window.isSecureContext) {
-        navigator.clipboard.writeText(src.textContent).then(function () { toast(btn.dataset.copyDone || "Kopiert."); }, mark);
-      } else mark();
+        navigator.clipboard.writeText(text).then(done, legacy);
+      } else legacy();
     });
   });
 
-  // ---- a select that shows a field only for one value (multicast group); the hidden field is not sent ----
+  // ---- a select that shows a field only for one value (multicast group), optionally another field for
+  //      all other values (data-toggles-else); hidden fields are not sent ----
   all("select[data-toggles]").forEach(function (sel) {
-    var field = $(sel.dataset.toggles);
+    var field = $(sel.dataset.toggles), other = sel.dataset.togglesElse ? $(sel.dataset.togglesElse) : null;
     if (!field) return;
+    var show = function (f, on) {
+      if (!f) return;
+      f.hidden = !on;
+      all("input", f).forEach(function (i) { i.disabled = !on; });
+    };
     var sync = function () {
       var on = sel.value === sel.dataset.togglesOn;
-      field.hidden = !on;
-      all("input", field).forEach(function (i) { i.disabled = !on; });
+      show(field, on);
+      show(other, !on);
     };
     sel.addEventListener("change", sync);
     sync();
   });
 
-  // ---- games: search + filter ----
+  // ---- games: view (an | aus | alle) + search. The search always looks through all games. ----
   var games = $("games"), applyFilter = function () {};
   if (games) {
-    var search = $("game-search"), empty = $("game-empty"), nolan = $("nolan");
+    var search = $("game-search"), empty = $("game-empty"), none = $("game-none"), viewBox = $("game-view");
     var rows = all(".grow", games);
-    var filter = "all";
+    var view = viewBox.dataset.view || "an";
     applyFilter = function (quiet) {
       var q = (search.value || "").trim().toLowerCase();
       var shown = 0;
       rows.forEach(function (row) {
-        var d = row.dataset;
-        var ok = !q || d.search.toLowerCase().indexOf(q) >= 0;
-        if (ok && filter !== "all" && d.nolan) ok = false;
-        if (ok && filter === "an") ok = d.on === "1";
-        if (ok && filter === "aus") ok = d.on === "0";
-        if (ok && filter === "unsicher") ok = d.unsure === "1";
+        var d = row.dataset, ok;
+        if (q) ok = d.search.toLowerCase().indexOf(q) >= 0;
+        else if (d.nolan) ok = view !== "an";
+        else ok = view === "alle" || (view === "an") === (d.on === "1");
         row.hidden = !ok;
         if (ok) shown++;
       });
-      all("[data-gsec]", games).forEach(function (sec) { sec.hidden = !sec.querySelector(".grow:not([hidden])"); });
-      if (nolan && q && !nolan.hidden) nolan.open = true;
-      empty.hidden = shown > 0;
+      all("[data-gsec]", games).forEach(function (sec) {
+        var n = all(".grow:not([hidden])", sec).length;
+        sec.hidden = !n;
+        var c = sec.querySelector("[data-count]");
+        if (c) setText(c, String(n));
+        if (sec.tagName === "DETAILS" && q && n) sec.open = true;
+      });
+      empty.hidden = shown > 0 || !q;
+      if (none) none.hidden = shown > 0 || !!q;
       if (!quiet) setText($("game-count"), shown === 1 ? "1 Spiel gefunden" : shown + " Spiele gefunden");
     };
-    var setFilter = function (name) {
-      filter = name;
-      all(".chip[data-filter]").forEach(function (o) { o.setAttribute("aria-pressed", o.dataset.filter === name ? "true" : "false"); });
+    var setView = function (name) {
+      view = name;
+      all(".seg-item", viewBox).forEach(function (o) {
+        if (o.dataset.view === name) o.setAttribute("aria-current", "true"); else o.removeAttribute("aria-current");
+      });
       applyFilter();
     };
     search.addEventListener("input", function () { applyFilter(); });
-    all(".chip[data-filter]").forEach(function (c) { c.addEventListener("click", function () { setFilter(c.dataset.filter); }); });
+    all(".seg-item", viewBox).forEach(function (c) {
+      c.addEventListener("click", function (e) {
+        e.preventDefault();
+        history.replaceState(null, "", c.getAttribute("href"));
+        setView(c.dataset.view);
+      });
+    });
     doc.addEventListener("keydown", function (e) {
       if (e.key === "/" && !/^(INPUT|TEXTAREA|SELECT)$/.test(doc.activeElement.tagName) && !(dlg && dlg.open)) { e.preventDefault(); search.focus(); search.select(); }
       if (e.key === "Escape" && doc.activeElement === search && search.value) { search.value = ""; applyFilter(); }
     });
     var params = new URLSearchParams(location.search);
     if (params.get("q")) search.value = params.get("q");
-    var want = params.get("filter");
-    if (want && doc.querySelector('.chip[data-filter="' + want.replace(/[^a-z]/g, "") + '"]')) setFilter(want);
-    else if (search.value) applyFilter();
-    doc.addEventListener("relay:changed", function () { countGames(); if (filter !== "all") applyFilter(true); });
+    applyFilter(true);
+    // a game switched here keeps its place until the view is chosen again: nothing jumps away under the pointer
+    doc.addEventListener("relay:changed", function () { countGames(); });
   }
   function countGames() {
     if (!games) return;
@@ -273,7 +391,15 @@
       var tr = el("tr");
       cols.forEach(function (c) {
         var v = item[c.f];
-        tr.appendChild(el("td", c.cls, /\bnum\b/.test(c.cls) ? num(v) : String(v)));
+        var td = el("td", c.cls, /\bnum\b/.test(c.cls) ? num(v) : String(v));
+        if (c.f === "names" && item.game) {
+          var a = el("a", "rowlink", String(v));
+          a.href = "/spiele/" + encodeURIComponent(item.game);
+          td.textContent = "";
+          td.appendChild(a);
+          if (item.all) td.title = item.all;
+        }
+        tr.appendChild(td);
       });
       frag.appendChild(tr);
     });
@@ -283,6 +409,54 @@
       frag.appendChild(el("tr")).appendChild(td);
     }
     tbody.replaceChildren(frag);
+  }
+  function netsLine(a) {
+    var p = el("p", "alarm-nets");
+    p.appendChild(el("span", "label", "Betrifft " + a.nets.length + (a.nets.length === 1 ? " Netz" : " Netze")));
+    a.nets.forEach(function (n) {
+      var link = el("a", "netchip");
+      link.href = "#netz-" + n.vid;
+      var key = el("span", "key key-sm", n.key);
+      key.setAttribute("aria-hidden", "true");
+      link.appendChild(key);
+      link.appendChild(doc.createTextNode(n.name));
+      p.appendChild(link);
+    });
+    return p;
+  }
+  function alarmCard(a, open, canAck) {
+    var li = el("li", "alarm note"), box = el("div", "note-body"), title = el("p", "alarm-title");
+    li.dataset.tone = open ? "danger" : "neutral";
+    li.id = "alarm-" + a.kind;
+    li.tabIndex = -1;
+    li.appendChild(icon(open ? "alert" : "check"));
+    title.appendChild(el("b", "", a.title));
+    title.appendChild(doc.createTextNode(" "));
+    title.appendChild(el("span", "alarm-meta", num(a.count) + "× · zuletzt " + fmtTime(new Date(a.last), "time") + (!open && a.acked_by ? " · gesehen von " + a.acked_by : "")));
+    box.appendChild(title);
+    if (open && a.hint) box.appendChild(el("p", "", a.hint));
+    if (a.nets && a.nets.length) box.appendChild(netsLine(a));
+    if (a.where) {
+      var w = el("p", "small muted", "Betrifft: ");
+      w.appendChild(el("span", "mono", a.where));
+      box.appendChild(w);
+    }
+    if (open && a.detail) {
+      var det = el("details", "fold"), sum = el("summary");
+      sum.appendChild(el("span", "label", "Technische Details"));
+      det.appendChild(sum);
+      det.appendChild(el("p", "small muted", a.detail));
+      det.dataset.key = "detail-" + a.kind;
+      box.appendChild(det);
+    }
+    if (open && canAck) box.appendChild(ackForm(a.kind));
+    li.appendChild(box);
+    return li;
+  }
+  function alarmNets(list) {
+    var seenNets = {}, n = 0;
+    list.forEach(function (a) { (a.nets || []).forEach(function (x) { if (!seenNets[x.vid]) { seenNets[x.vid] = 1; n++; } }); });
+    return n === 0 ? "siehe unten" : n === 1 ? "betrifft 1 Netz" : "betrifft " + n + " Netze";
   }
   function alarms(list) {
     var ul = $("alarms");
@@ -296,27 +470,22 @@
     var st = $("stat-alarm");
     if (st) {
       st.classList.toggle("stat-alarm", list.length > 0);
-      setText($("stat-alarm-sub"), list.length ? "siehe unten" : "alles ruhig");
+      setText($("stat-alarm-sub"), list.length ? alarmNets(list) : "alles ruhig");
     }
     if (!ul) return;
-    var key = JSON.stringify(list);
-    if (prev.alarms === key) return;
+    // count and time change with every sample; rebuild only when something else changed, so an opened
+    // "Technische Details" and the keyboard focus stay where they are
+    var key = JSON.stringify(list.map(function (a) { return [a.kind, a.title, a.hint, a.nets, a.where, a.detail]; }));
+    if (prev.alarms === key) {
+      list.forEach(function (a) {
+        var meta = doc.querySelector("#alarm-" + a.kind + " .alarm-meta");
+        setText(meta, num(a.count) + "× · zuletzt " + fmtTime(new Date(a.last), "time"));
+      });
+      return;
+    }
     prev.alarms = key;
     var frag = doc.createDocumentFragment();
-    list.forEach(function (a) {
-      var li = el("li", "alarm"), box = el("div"), title = el("p", "alarm-title");
-      li.appendChild(icon("alert"));
-      title.appendChild(el("b", "", a.title));
-      title.appendChild(doc.createTextNode(" "));
-      title.appendChild(el("span", "alarm-meta", num(a.count) + "× · zuletzt " + fmtTime(new Date(a.last), "time")));
-      box.appendChild(title);
-      if (a.hint) box.appendChild(el("p", "", a.hint));
-      box.appendChild(el("p", "small muted")).appendChild(el("span", "mono", a.where));
-      box.appendChild(el("p", "small muted", a.detail));
-      if (ul.hasAttribute("data-can-ack")) box.appendChild(ackForm(a.kind));
-      li.appendChild(box);
-      frag.appendChild(li);
-    });
+    list.forEach(function (a) { frag.appendChild(alarmCard(a, true, ul.hasAttribute("data-can-ack"))); });
     ul.replaceChildren(frag);
     ul.hidden = !list.length;
     $("alarms-empty").hidden = list.length > 0;
@@ -341,17 +510,7 @@
     box.hidden = !list.length;
     setText($("seen-count"), String(list.length));
     var frag = doc.createDocumentFragment();
-    list.forEach(function (a) {
-      var li = el("li", "alarm alarm-seen"), box2 = el("div"), title = el("p", "alarm-title");
-      li.appendChild(icon("check"));
-      title.appendChild(el("b", "", a.title));
-      title.appendChild(doc.createTextNode(" "));
-      title.appendChild(el("span", "alarm-meta", num(a.count) + "× · zuletzt " + fmtTime(new Date(a.last), "time") + (a.acked_by ? " · gesehen von " + a.acked_by : "")));
-      box2.appendChild(title);
-      box2.appendChild(el("p", "small muted")).appendChild(el("span", "mono", a.where));
-      li.appendChild(box2);
-      frag.appendChild(li);
-    });
+    list.forEach(function (a) { frag.appendChild(alarmCard(a, false, false)); });
     ul.replaceChildren(frag);
   }
 
@@ -371,6 +530,7 @@
     });
     all("[data-when]").forEach(function (e) { e.hidden = e.dataset.when.split(" ").indexOf(v.state.key) < 0; });
     if (stopLink) stopLink.hidden = !v.state.can_stop;
+    if (resumeLink) resumeLink.hidden = v.state.key !== "paused";
     if ($("needs-apply")) $("needs-apply").hidden = !v.needs_apply;
     if (lastState && lastState !== v.state.key) announce("Betriebsart jetzt: " + v.state.label + ". " + v.state.headline + ".");
     lastState = v.state.key;
@@ -382,10 +542,15 @@
       all('[data-vlan="' + x.vid + '"]').forEach(function (t) {
         if (t.dataset.status !== x.status) t.dataset.status = x.status;
         setText(t.querySelector('[data-f="rate"]'), num(x.in_per_s));
-        setText(t.querySelector('[data-f="status"]'), x.status);
+        setText(t.querySelector('[data-f="label"]'), x.label);
+        var link = t.querySelector("a.tile-link");
+        if (link) {
+          var href = x.alarm_kind ? "#alarm-" + x.alarm_kind : link.dataset.href;
+          if (link.getAttribute("href") !== href) link.setAttribute("href", href);
+        }
         setText(t.querySelector('[data-f="in"]'), num(x.in));
         setText(t.querySelector('[data-f="out"]'), num(x.out));
-        var bar = t.querySelector(".vbar i");
+        var bar = t.querySelector(".tile-track i");
         if (bar) bar.style.width = Math.round(100 * x.in_per_s / max) + "%";
       });
     });
@@ -448,7 +613,8 @@
     if (!liveEl) return;
     liveEl.dataset.state = state;
     liveEl.removeAttribute("title");
-    setText(liveText, state === "on" ? "Live" : state === "off" ? "Getrennt" : "Verbindet");
+    setText(liveText, state === "on" ? fmtTime(new Date(lastAt), "time") : state === "off" ? "getrennt" : "verbindet");
+    liveEl.title = state === "on" ? "Live: Stand von " + fmtTime(new Date(lastAt), "time") : "";
   }
   function markLost(isLost) {
     if (lost === isLost) return;

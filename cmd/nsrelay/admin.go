@@ -1,6 +1,7 @@
 package main
 
 import (
+	"bytes"
 	"context"
 	"flag"
 	"fmt"
@@ -16,6 +17,8 @@ import (
 	"github.com/Netsession2024/Netsession-Relay/internal/control"
 	"github.com/Netsession2024/Netsession-Relay/internal/engineapi"
 	"github.com/Netsession2024/Netsession-Relay/internal/store"
+
+	"gopkg.in/yaml.v3"
 )
 
 const defaultDB = "/var/lib/nsrelay-web/nsrelay.db"
@@ -57,6 +60,8 @@ const adminUsage = `usage: nsrelay admin <command> [flags]
   revisions                                               list revisions
   rollback <revision-id>                                  restore and apply an earlier revision
   audit                                                   audit log
+  export [file]                                           configuration of the active event as YAML (stdout or file)
+  import <file>                                           replace VLANs, profiles and event games from a YAML export; then apply
   set-password <name> [-role admin|operator|viewer]       local account (emergency login); prints a new password once
   seed                                                    sync games.yaml into the database
   finder-start [-vlans 1101,1102] [-src IP] [-seconds 300] port finder session (via socket)
@@ -252,6 +257,44 @@ func runAdmin(args []string, stdout, stderr io.Writer) int {
 		for _, e := range log {
 			fmt.Fprintf(stdout, "%s  %-18s %-16s %s\n", e.TS[:19], e.User, e.Action, e.Object)
 		}
+	case "export":
+		c, err := st.ExportConfig(ctx)
+		if err != nil {
+			return fail(err)
+		}
+		b, err := yaml.Marshal(c)
+		if err != nil {
+			return fail(err)
+		}
+		if fs.NArg() == 0 {
+			_, _ = stdout.Write(b)
+			break
+		}
+		if err := os.WriteFile(fs.Arg(0), b, 0o600); err != nil {
+			return fail(err)
+		}
+		fmt.Fprintln(stdout, "written:", fs.Arg(0))
+	case "import":
+		if fs.NArg() != 1 {
+			return fail(fmt.Errorf("admin import: file missing"))
+		}
+		b, err := os.ReadFile(fs.Arg(0))
+		if err != nil {
+			return fail(err)
+		}
+		var c store.Config
+		dec := yaml.NewDecoder(bytes.NewReader(b))
+		dec.KnownFields(true)
+		if err := dec.Decode(&c); err != nil {
+			return fail(fmt.Errorf("admin import: %w", err))
+		}
+		if c.Event == "" || len(c.VLANs) == 0 {
+			return fail(fmt.Errorf("admin import: no event or no VLANs in %s", fs.Arg(0)))
+		}
+		if err := st.ImportConfig(ctx, af.user, c); err != nil {
+			return fail(err)
+		}
+		fmt.Fprintf(stdout, "imported event %q (%d VLANs, %d profiles, %d games); run `nsrelay admin apply`\n", c.Event, len(c.VLANs), len(c.Profiles), len(c.Games))
 	default:
 		fmt.Fprintln(stderr, adminUsage)
 		return 2

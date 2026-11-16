@@ -7,6 +7,8 @@ import (
 	"errors"
 	"fmt"
 	"net/netip"
+	"regexp"
+	"slices"
 	"sort"
 
 	"github.com/Netsession2024/Netsession-Relay/internal/compile"
@@ -465,6 +467,79 @@ func (s *Store) SetVLANEnabled(ctx context.Context, user string, vid int, on boo
 	return s.Audit(ctx, user, action, fmt.Sprint(vid), "", "")
 }
 
+// VLAN returns one VLAN with its state in the active event.
+func (s *Store) VLAN(ctx context.Context, vid int) (VLANConfig, error) {
+	c, err := s.ExportConfig(ctx)
+	if err != nil {
+		return VLANConfig{}, err
+	}
+	for _, v := range c.VLANs {
+		if v.VID == vid {
+			return v, nil
+		}
+	}
+	return VLANConfig{}, fmt.Errorf("%w: VLAN %d", ErrNotFound, vid)
+}
+
+// AddVLAN stores a new VLAN and adds it to the active event (switched on or off as v.Enabled says).
+// An existing VID is never overwritten (ErrExists).
+func (s *Store) AddVLAN(ctx context.Context, user string, v VLANConfig) error {
+	ev, err := s.activeEventID(ctx)
+	if err != nil {
+		return err
+	}
+	err = s.tx(ctx, func(tx *sql.Tx) error {
+		var n int
+		if err := tx.QueryRowContext(ctx, `SELECT count(*) FROM vlan WHERE vid = ?`, v.VID).Scan(&n); err != nil {
+			return err
+		}
+		if n > 0 {
+			return fmt.Errorf("%w: VLAN %d", ErrExists, v.VID)
+		}
+		if _, err := tx.ExecContext(ctx, `INSERT INTO vlan(vid, name, grp, cidr, relay_ip, attach, parent, device, rate_pps, rate_burst) VALUES (?,?,?,?,?,?,?,?,?,?)`,
+			v.VID, v.Name, v.Group, v.CIDR, v.RelayIP, v.Attach, v.Parent, v.Device, v.RatePPS, v.Burst); err != nil {
+			return err
+		}
+		_, err := tx.ExecContext(ctx, `INSERT INTO event_vlan(event_id, vid, enabled) VALUES (?,?,?)`, ev, v.VID, v.Enabled)
+		return err
+	})
+	if err != nil {
+		return err
+	}
+	a, _ := json.Marshal(v)
+	return s.Audit(ctx, user, "vlan.create", fmt.Sprint(v.VID), "", string(a))
+}
+
+// UpdateVLAN changes name, group, addresses, interface and rate of an existing VLAN. The VID and the
+// on/off state in the event stay as they are.
+func (s *Store) UpdateVLAN(ctx context.Context, user string, v VLANConfig) error {
+	before, err := s.VLAN(ctx, v.VID)
+	if err != nil {
+		return err
+	}
+	if _, err := s.DB.ExecContext(ctx, `UPDATE vlan SET name = ?, grp = ?, cidr = ?, relay_ip = ?, attach = ?, parent = ?, device = ?, rate_pps = ?, rate_burst = ? WHERE vid = ?`,
+		v.Name, v.Group, v.CIDR, v.RelayIP, v.Attach, v.Parent, v.Device, v.RatePPS, v.Burst, v.VID); err != nil {
+		return err
+	}
+	v.Enabled = before.Enabled
+	b, _ := json.Marshal(before)
+	a, _ := json.Marshal(v)
+	return s.Audit(ctx, user, "vlan.update", fmt.Sprint(v.VID), string(b), string(a))
+}
+
+// DeleteVLAN removes a VLAN from the configuration and from all events.
+func (s *Store) DeleteVLAN(ctx context.Context, user string, vid int) error {
+	before, err := s.VLAN(ctx, vid)
+	if err != nil {
+		return err
+	}
+	if _, err := s.DB.ExecContext(ctx, `DELETE FROM vlan WHERE vid = ?`, vid); err != nil { // event_vlan: ON DELETE CASCADE
+		return err
+	}
+	b, _ := json.Marshal(before)
+	return s.Audit(ctx, user, "vlan.delete", fmt.Sprint(vid), string(b), "")
+}
+
 // ErrExists is returned when a new game would replace an existing one.
 var ErrExists = errors.New("exists")
 
@@ -474,7 +549,7 @@ func (s *Store) AddGame(ctx context.Context, user, origin string, g gamedb.Game)
 		return err
 	}
 	data, _ := json.Marshal(g)
-	return s.tx(ctx, func(tx *sql.Tx) error {
+	err := s.tx(ctx, func(tx *sql.Tx) error {
 		var n int
 		if err := tx.QueryRowContext(ctx, `SELECT count(*) FROM game WHERE id = ?`, g.ID).Scan(&n); err != nil {
 			return err
@@ -490,4 +565,263 @@ func (s *Store) AddGame(ctx context.Context, user, origin string, g gamedb.Game)
 			s.ts(), user, "game.create", g.ID, "", string(data))
 		return err
 	})
+	if err == nil {
+		s.notifyAudit(AuditEntry{TS: s.ts(), User: user, Action: "game.create", Object: g.ID})
+	}
+	return err
+}
+
+// Game returns one game with its store metadata.
+func (s *Store) Game(ctx context.Context, id string) (GameRow, error) {
+	games, err := s.Games(ctx)
+	if err != nil {
+		return GameRow{}, err
+	}
+	for _, g := range games {
+		if g.ID == id {
+			return g, nil
+		}
+	}
+	return GameRow{}, fmt.Errorf("%w: game %q", ErrNotFound, id)
+}
+
+// UpdateGame replaces the data of an existing game. A seed game is marked locally modified, so a later seed
+// sync does not overwrite it (it gets "seed differs" instead).
+func (s *Store) UpdateGame(ctx context.Context, user string, g gamedb.Game) error {
+	if err := gamedb.Validate([]gamedb.Game{g}); err != nil {
+		return err
+	}
+	before, err := s.Game(ctx, g.ID)
+	if err != nil {
+		return err
+	}
+	data, _ := json.Marshal(g)
+	if _, err := s.DB.ExecContext(ctx, `UPDATE game SET name=?, category=?, relay_needed=?, default_enabled=?, confidence=?, data=?,
+		locally_modified = CASE WHEN origin = 'seed' THEN 1 ELSE locally_modified END WHERE id=?`,
+		g.Name, g.Category, g.RelayNeeded, g.DefaultEnabled, g.Confidence, string(data), g.ID); err != nil {
+		return err
+	}
+	b, _ := json.Marshal(before.Game)
+	return s.Audit(ctx, user, "game.update", g.ID, string(b), string(data))
+}
+
+// ErrSeedGame is returned when a game from the seed database would be deleted (it would come back with the
+// next seed sync; switch it off instead).
+var ErrSeedGame = errors.New("game comes from the game database")
+
+// DeleteGame removes a game that was created locally (custom, sniffer, import) from all events.
+func (s *Store) DeleteGame(ctx context.Context, user, id string) error {
+	before, err := s.Game(ctx, id)
+	if err != nil {
+		return err
+	}
+	if before.Origin == "seed" {
+		return fmt.Errorf("%w: %s", ErrSeedGame, id)
+	}
+	if _, err := s.DB.ExecContext(ctx, `DELETE FROM game WHERE id = ?`, id); err != nil { // event_game: CASCADE
+		return err
+	}
+	b, _ := json.Marshal(before.Game)
+	return s.Audit(ctx, user, "game.delete", id, string(b), "")
+}
+
+// ---- flow profiles (which group sees which group) ----
+
+var profileNameRE = regexp.MustCompile(`^[a-z0-9][a-z0-9_-]{0,31}$`)
+
+// ErrInvalid is returned for names or values the store refuses.
+var ErrInvalid = errors.New("invalid")
+
+// SetProfileEdges replaces the edges of a flow profile.
+func (s *Store) SetProfileEdges(ctx context.Context, user, name string, edges []compile.Edge) error {
+	var before []compile.Edge
+	err := s.tx(ctx, func(tx *sql.Tx) error {
+		var n int
+		if err := tx.QueryRowContext(ctx, `SELECT count(*) FROM flow_profile WHERE name = ?`, name).Scan(&n); err != nil {
+			return err
+		}
+		if n == 0 {
+			return fmt.Errorf("%w: profile %q", ErrNotFound, name)
+		}
+		rows, err := tx.QueryContext(ctx, `SELECT src, dst FROM flow_profile_edge WHERE profile = ? ORDER BY src, dst`, name)
+		if err != nil {
+			return err
+		}
+		for rows.Next() {
+			var e compile.Edge
+			if err := rows.Scan(&e.Src, &e.Dst); err != nil {
+				rows.Close()
+				return err
+			}
+			before = append(before, e)
+		}
+		rows.Close()
+		if _, err := tx.ExecContext(ctx, `DELETE FROM flow_profile_edge WHERE profile = ?`, name); err != nil {
+			return err
+		}
+		for _, e := range edges {
+			if _, err := tx.ExecContext(ctx, `INSERT OR IGNORE INTO flow_profile_edge(profile, src, dst) VALUES (?,?,?)`, name, e.Src, e.Dst); err != nil {
+				return err
+			}
+		}
+		return nil
+	})
+	if err != nil {
+		return err
+	}
+	b, _ := json.Marshal(before)
+	a, _ := json.Marshal(edges)
+	return s.Audit(ctx, user, "profile.edges", name, string(b), string(a))
+}
+
+// AddProfile creates a flow profile, optionally as a copy of another one.
+func (s *Store) AddProfile(ctx context.Context, user, name, copyFrom string) error {
+	if !profileNameRE.MatchString(name) {
+		return fmt.Errorf("%w: profile name %q", ErrInvalid, name)
+	}
+	err := s.tx(ctx, func(tx *sql.Tx) error {
+		var n int
+		if err := tx.QueryRowContext(ctx, `SELECT count(*) FROM flow_profile WHERE name = ?`, name).Scan(&n); err != nil {
+			return err
+		}
+		if n > 0 {
+			return fmt.Errorf("%w: profile %q", ErrExists, name)
+		}
+		if _, err := tx.ExecContext(ctx, `INSERT INTO flow_profile(name, is_default) VALUES (?, 0)`, name); err != nil {
+			return err
+		}
+		if copyFrom != "" {
+			if _, err := tx.ExecContext(ctx, `INSERT INTO flow_profile_edge(profile, src, dst) SELECT ?, src, dst FROM flow_profile_edge WHERE profile = ?`, name, copyFrom); err != nil {
+				return err
+			}
+		}
+		return nil
+	})
+	if err != nil {
+		return err
+	}
+	return s.Audit(ctx, user, "profile.create", name, copyFrom, "")
+}
+
+// ErrDefaultProfile is returned when the default profile would be deleted.
+var ErrDefaultProfile = errors.New("default profile")
+
+// DeleteProfile removes a flow profile; games that used it fall back to the default profile.
+func (s *Store) DeleteProfile(ctx context.Context, user, name string) error {
+	err := s.tx(ctx, func(tx *sql.Tx) error {
+		var def bool
+		err := tx.QueryRowContext(ctx, `SELECT is_default FROM flow_profile WHERE name = ?`, name).Scan(&def)
+		if errors.Is(err, sql.ErrNoRows) {
+			return fmt.Errorf("%w: profile %q", ErrNotFound, name)
+		}
+		if err != nil {
+			return err
+		}
+		if def {
+			return fmt.Errorf("%w: %s", ErrDefaultProfile, name)
+		}
+		if _, err := tx.ExecContext(ctx, `UPDATE event_game SET flow_profile = '' WHERE flow_profile = ?`, name); err != nil {
+			return err
+		}
+		_, err = tx.ExecContext(ctx, `DELETE FROM flow_profile WHERE name = ?`, name)
+		return err
+	})
+	if err != nil {
+		return err
+	}
+	return s.Audit(ctx, user, "profile.delete", name, "", "")
+}
+
+// SetDefaultProfile makes name the default flow profile.
+func (s *Store) SetDefaultProfile(ctx context.Context, user, name string) error {
+	err := s.tx(ctx, func(tx *sql.Tx) error {
+		if _, err := tx.ExecContext(ctx, `UPDATE flow_profile SET is_default = (name = ?)`, name); err != nil {
+			return err
+		}
+		var n int
+		if err := tx.QueryRowContext(ctx, `SELECT count(*) FROM flow_profile WHERE name = ? AND is_default = 1`, name).Scan(&n); err != nil {
+			return err
+		}
+		if n == 0 {
+			return fmt.Errorf("%w: profile %q", ErrNotFound, name)
+		}
+		return nil
+	})
+	if err != nil {
+		return err
+	}
+	return s.Audit(ctx, user, "profile.default", name, "", "")
+}
+
+// SetGameProfile sets the flow profile of a switched-on game in the active event ("" = default profile).
+func (s *Store) SetGameProfile(ctx context.Context, user, gameID, profile string) error {
+	ev, err := s.activeEventID(ctx)
+	if err != nil {
+		return err
+	}
+	if profile != "" {
+		var n int
+		if err := s.DB.QueryRowContext(ctx, `SELECT count(*) FROM flow_profile WHERE name = ?`, profile).Scan(&n); err != nil {
+			return err
+		}
+		if n == 0 {
+			return fmt.Errorf("%w: profile %q", ErrNotFound, profile)
+		}
+	}
+	res, err := s.DB.ExecContext(ctx, `UPDATE event_game SET flow_profile = ? WHERE event_id = ? AND game_id = ?`, profile, ev, gameID)
+	if err != nil {
+		return err
+	}
+	if n, _ := res.RowsAffected(); n == 0 {
+		return fmt.Errorf("%w: game %q is not switched on", ErrNotFound, gameID)
+	}
+	return s.Audit(ctx, user, "game.profile", gameID, "", profile)
+}
+
+// SetProfileEdge switches one edge of a flow profile on or off.
+func (s *Store) SetProfileEdge(ctx context.Context, user, name string, e compile.Edge, on bool) error {
+	c, err := s.ExportConfig(ctx)
+	if err != nil {
+		return err
+	}
+	for _, p := range c.Profiles {
+		if p.Name != name {
+			continue
+		}
+		edges := slices.DeleteFunc(slices.Clone(p.Edges), func(x compile.Edge) bool { return x == e })
+		if on {
+			edges = append(edges, e)
+		}
+		return s.SetProfileEdges(ctx, user, name, edges)
+	}
+	return fmt.Errorf("%w: profile %q", ErrNotFound, name)
+}
+
+// RenameProfile renames a flow profile; edges follow by ON UPDATE CASCADE, games of all events are updated.
+func (s *Store) RenameProfile(ctx context.Context, user, name, to string) error {
+	if !profileNameRE.MatchString(to) {
+		return fmt.Errorf("%w: profile name %q", ErrInvalid, to)
+	}
+	err := s.tx(ctx, func(tx *sql.Tx) error {
+		var n int
+		if err := tx.QueryRowContext(ctx, `SELECT count(*) FROM flow_profile WHERE name = ?`, to).Scan(&n); err != nil {
+			return err
+		}
+		if n > 0 {
+			return fmt.Errorf("%w: profile %q", ErrExists, to)
+		}
+		res, err := tx.ExecContext(ctx, `UPDATE flow_profile SET name = ? WHERE name = ?`, to, name)
+		if err != nil {
+			return err
+		}
+		if n, _ := res.RowsAffected(); n == 0 {
+			return fmt.Errorf("%w: profile %q", ErrNotFound, name)
+		}
+		_, err = tx.ExecContext(ctx, `UPDATE event_game SET flow_profile = ? WHERE flow_profile = ?`, to, name)
+		return err
+	})
+	if err != nil {
+		return err
+	}
+	return s.Audit(ctx, user, "profile.rename", name, name, to)
 }

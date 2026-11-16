@@ -11,7 +11,7 @@
       <label class="field"><span class="label">Passwort</span><input name="password" type="password" autocomplete="current-password" required></label>
       <button class="btn" type="submit">Anmelden</button>
     </form>
-    {{if .Demo}}<p class="notice notice-warn">{{icon "alert"}}<span><b>Demo.</b> Erfundene Daten, es wird nichts weitergeleitet. Konten <span class="mono">demo</span>, <span class="mono">op</span>, <span class="mono">view</span>, Passwort <span class="mono">demo</span>.</span></p>{{end}}
+    {{if .Demo}}<p class="login-demo"><span class="flag" data-tone="warn">{{icon "alert"}}Demo</span> Erfundene Daten, es wird nichts weitergeleitet. Konten <span class="mono">demo</span>, <span class="mono">op</span>, <span class="mono">view</span>, Passwort <span class="mono">demo</span>.</p>{{end}}
     <details class="fold">
       <summary><span class="label">Kein Konto oder Passwort vergessen?</span></summary>
       <p class="small muted">Lokale Konten legt ein Admin auf der Relay-VM an:<br><code>docker exec nsrelay-web-1 nsrelay admin set-password &lt;name&gt;</code></p>

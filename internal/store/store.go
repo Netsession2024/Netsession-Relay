@@ -11,6 +11,7 @@ import (
 	"io/fs"
 	"sort"
 	"strings"
+	"sync"
 	"time"
 
 	_ "modernc.org/sqlite" // pure-Go SQLite driver, registers "sqlite"
@@ -23,6 +24,9 @@ var migrations embed.FS
 type Store struct {
 	DB  *sql.DB
 	Now func() time.Time
+
+	auditMu sync.Mutex
+	onAudit func(AuditEntry)
 }
 
 // Open opens (and creates) the database file and applies pending migrations.
@@ -130,7 +134,26 @@ var ErrNotFound = errors.New("store: not found")
 func (s *Store) Audit(ctx context.Context, user, action, object, before, after string) error {
 	_, err := s.DB.ExecContext(ctx, `INSERT INTO audit_log(ts, user, action, object, before, after) VALUES (?,?,?,?,?,?)`,
 		s.ts(), user, action, object, before, after)
+	if err == nil {
+		s.notifyAudit(AuditEntry{TS: s.ts(), User: user, Action: action, Object: object, Before: before, After: after})
+	}
 	return err
+}
+
+// SetOnAudit sets a function called after every audit entry (syslog). It must not block.
+func (s *Store) SetOnAudit(fn func(AuditEntry)) {
+	s.auditMu.Lock()
+	s.onAudit = fn
+	s.auditMu.Unlock()
+}
+
+func (s *Store) notifyAudit(e AuditEntry) {
+	s.auditMu.Lock()
+	fn := s.onAudit
+	s.auditMu.Unlock()
+	if fn != nil {
+		fn(e)
+	}
 }
 
 // AuditEntry is one audit log row.

@@ -168,6 +168,11 @@ def main():
     dep("Relay: Selbsttest-Befunde", "nsrelay.selftest", "$.self_test_findings",
         triggers=[("last(KEY)>0", "Relay: Selbsttest meldet Befunde am Host", "INFO",
                    "Details auf der System-Seite (z. B. ip_forward, rp_filter).")])
+    dep("Relay: Monitoring-Ziele", "nsrelay.outputs.total", "$.outputs_total", default="0")
+    dep("Relay: Monitoring-Ziele mit Fehler", "nsrelay.outputs.failing", "$.outputs_failing", default="0",
+        triggers=[("last(KEY)>0", "Relay: Monitoring-Ziel nicht erreichbar", "WARNING",
+                   "Ein Syslog-, OpenTelemetry- oder SNMP-Ziel nimmt seit 2 Minuten nichts an. Details: System, Monitoring.")])
+    dep("Relay: verworfene Meldungen", "nsrelay.outputs.dropped", "$.outputs_dropped", default="0")
     for r in ["loop", "rate", "foreign_relay", "src_subnet", "auto_paused", "unknown_port"]:
         dep(f"Relay: verworfen {r} pro Sekunde", f"nsrelay.drops.rate[{r}]", f"$.drops.{r}", vt="FLOAT", units="fps",
             change=True, default="0", tag="drops")

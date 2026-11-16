@@ -295,6 +295,66 @@ zabbix_export:
               name: 'Relay: Selbsttest meldet Befunde am Host'
               priority: INFO
               description: 'Details auf der System-Seite (z. B. ip_forward, rp_filter).'
+        - uuid: 1e89651152a347de81722dd62c99ddce
+          name: 'Relay: Monitoring-Ziele'
+          type: DEPENDENT
+          key: 'nsrelay.outputs.total'
+          delay: '0'
+          history: 30d
+          value_type: UNSIGNED
+          preprocessing:
+            - type: JSONPATH
+              parameters:
+                - '$.outputs_total'
+              error_handler: CUSTOM_VALUE
+              error_handler_params: '0'
+          master_item:
+            key: nsrelay.monitoring
+          tags:
+            - tag: component
+              value: relay
+        - uuid: 297bf101274c4cbfb8d69b645bce01dc
+          name: 'Relay: Monitoring-Ziele mit Fehler'
+          type: DEPENDENT
+          key: 'nsrelay.outputs.failing'
+          delay: '0'
+          history: 30d
+          value_type: UNSIGNED
+          preprocessing:
+            - type: JSONPATH
+              parameters:
+                - '$.outputs_failing'
+              error_handler: CUSTOM_VALUE
+              error_handler_params: '0'
+          master_item:
+            key: nsrelay.monitoring
+          tags:
+            - tag: component
+              value: relay
+          triggers:
+            - uuid: ca4f33fec65f4741aab099d54f89f64b
+              expression: 'last(/Netsession Relay/nsrelay.outputs.failing)>0'
+              name: 'Relay: Monitoring-Ziel nicht erreichbar'
+              priority: WARNING
+              description: 'Ein Syslog-, OpenTelemetry- oder SNMP-Ziel nimmt seit 2 Minuten nichts an. Details: System, Monitoring.'
+        - uuid: 94328af70d5f45b88196974dbcbecad4
+          name: 'Relay: verworfene Meldungen'
+          type: DEPENDENT
+          key: 'nsrelay.outputs.dropped'
+          delay: '0'
+          history: 30d
+          value_type: UNSIGNED
+          preprocessing:
+            - type: JSONPATH
+              parameters:
+                - '$.outputs_dropped'
+              error_handler: CUSTOM_VALUE
+              error_handler_params: '0'
+          master_item:
+            key: nsrelay.monitoring
+          tags:
+            - tag: component
+              value: relay
         - uuid: 6f94908c78d14c9f8e18ee39990eebc7
           name: 'Relay: verworfen loop pro Sekunde'
           type: DEPENDENT

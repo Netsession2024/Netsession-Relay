@@ -28,6 +28,8 @@ net.ipv6.conf.default.disable_ipv6 = 1
 net.ipv6.conf.${TRUNK}.disable_ipv6 = 1
 # more IGMP memberships per socket (one socket per VLAN, a few groups each)
 net.ipv4.igmp_max_memberships = 64
+# the SNMP agent of the web part (uid 10001, no capabilities) binds UDP 161 on the MGMT address
+net.ipv4.ip_unprivileged_port_start = 161
 EOF
 sysctl -q --system
 

@@ -6,28 +6,28 @@
 
 <section class="section section-first">
   <h2>Stände</h2>
-  <div class="tablewrap"><table>
+  <div class="tablewrap"><table class="stack">
     <thead><tr><th>Nr.</th><th>Zeit</th><th>Wer</th><th>Was</th><th class="col-opt">Prüfsumme</th><th>Zustand</th><th><span class="sr">Aktion</span></th></tr></thead>
     <tbody>{{range .Data.Revisions}}<tr>
-      <td class="mono">{{.ID}}</td><td class="nowrap">{{ts .TS "datetime"}}</td><td>{{.User}}</td><td>{{if .Note}}{{.Note}}{{else}}<span class="muted">–</span>{{end}}</td>
-      <td class="mono small col-opt">{{short .Hash}}</td>
-      <td>{{if not .AppliedOK}}<span class="tag tag-danger">{{icon "alert"}}Abgelehnt</span>{{else if eq .Hash $hash}}<span class="tag tag-ok">{{icon "check"}}Läuft</span>{{else}}<span class="muted">älter</span>{{end}}</td>
-      <td class="num">{{if and .AppliedOK (ne .Hash $hash)}}<form method="post" action="/system/rollback/{{.ID}}" class="inline" data-confirm="Spiele, Netze und Betriebsart werden auf Stand {{.ID}} gesetzt und sofort angewendet. Der jetzige Stand bleibt in der Liste." data-confirm-title="Auf Stand {{.ID}} zurückrollen?" data-confirm-ok="Zurückrollen"><input type="hidden" name="csrf" value="{{$csrf}}"><button class="btn-outline btn-sm" type="submit">Zurückrollen<span class="sr"> auf Stand {{.ID}}</span></button></form>{{end}}</td>
-    </tr>{{else}}<tr><td colspan="7" class="muted">Noch nichts angewendet.</td></tr>{{end}}</tbody>
+      <td class="mono stack-main"><span class="sr">Stand </span>{{.ID}}</td><td class="nowrap" data-th="Zeit">{{ts .TS "datetime"}}</td><td data-th="Wer">{{.User}}</td><td data-th="Was">{{if .Note}}{{.Note}}{{else}}<span class="muted">–</span>{{end}}</td>
+      <td class="mono small col-opt" data-th="Prüfsumme">{{short .Hash}}</td>
+      <td data-th="Zustand">{{if not .AppliedOK}}<span class="tag tag-danger">{{icon "alert"}}Abgelehnt</span>{{else if eq .Hash $hash}}<span class="tag tag-ok">{{icon "check"}}Läuft</span>{{else}}<span class="muted">älter</span>{{end}}</td>
+      <td class="num col-act">{{if and .AppliedOK (ne .Hash $hash)}}<form method="post" action="/system/rollback/{{.ID}}" class="inline" data-confirm="Spiele, Netze und Betriebsart werden auf Stand {{.ID}} gesetzt und sofort angewendet. Der jetzige Stand bleibt in der Liste." data-confirm-title="Auf Stand {{.ID}} zurückrollen?" data-confirm-ok="Zurückrollen"><input type="hidden" name="csrf" value="{{$csrf}}"><button class="btn-outline btn-sm" type="submit">Zurückrollen<span class="sr"> auf Stand {{.ID}}</span></button></form>{{end}}</td>
+    </tr>{{else}}<tr><td colspan="7" class="muted">Noch kein Stand. Der erste entsteht, sobald du ein Spiel schaltest.</td></tr>{{end}}</tbody>
   </table></div>
 </section>
 
 <section class="section">
   <div class="sechead">
     <h2>Protokoll</h2>
-    {{if .Data.Logins}}<a href="/verlauf">Anmeldungen ausblenden</a>{{else if .Data.Hidden}}<a href="/verlauf?anmeldungen=1">{{.Data.Hidden}} Anmeldungen einblenden</a>{{end}}
+    {{if .Data.Logins}}<a class="small" href="/verlauf">Anmeldungen ausblenden</a>{{else if .Data.Hidden}}<a class="small" href="/verlauf?anmeldungen=1">{{if eq .Data.Hidden 1}}1 Anmeldung einblenden{{else}}{{.Data.Hidden}} Anmeldungen einblenden{{end}}</a>{{end}}
   </div>
-  <div class="tablewrap"><table>
-    <thead><tr><th>Zeit</th><th>Wer</th><th>Was</th><th>Womit</th></tr></thead>
+  <div class="tablewrap"><table class="stack">
+    <thead><tr><th>Zeit</th><th>Wer</th><th>Was</th><th>Betrifft</th></tr></thead>
     <tbody>{{range .Data.Audit}}<tr>
-      <td class="nowrap">{{ts .TS "datetime"}}</td><td>{{.User}}</td>
-      <td>{{if .Tone}}<span class="tone-{{.Tone}}">{{icon "alert"}}{{.Text}}</span>{{else}}{{.Text}}{{end}}</td>
-      <td{{if .Mono}} class="mono small"{{end}}>{{.Object}}</td>
+      <td class="nowrap" data-th="Zeit">{{ts .TS "datetime"}}</td><td data-th="Wer">{{.User}}</td>
+      <td class="stack-main">{{if .Tone}}<span class="tone-{{.Tone}}">{{icon "alert"}}{{.Text}}</span>{{else}}{{.Text}}{{end}}</td>
+      <td{{if .Mono}} class="mono small"{{end}} data-th="Betrifft">{{.Object}}</td>
     </tr>{{else}}<tr><td colspan="4" class="muted">Noch keine Einträge.</td></tr>{{end}}</tbody>
   </table></div>
   <p class="small muted">Die letzten 100 Einträge.</p>

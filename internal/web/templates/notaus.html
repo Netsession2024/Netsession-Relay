@@ -1,21 +1,32 @@
 {{define "content"}}
 <span class="bar"></span>
-<h1>Not-<em>Aus</em></h1>
+{{if and (not .Live.State.CanStop) .Data.Resume}}<h1>Relay <em>einschalten</em></h1>{{else}}<h1>Not-<em>Aus</em></h1>{{end}}
 <div class="narrow">
   {{if .Live.State.CanStop}}
   <p class="lead">Das Relay hört sofort auf, Spiele zwischen den Netzen zu verteilen.</p>
   <ul class="plain">
     <li>Laufende Partien bleiben bestehen.</li>
     <li>Neue Spiele werden nur noch am eigenen Tisch gefunden.</li>
-    <li>Wieder einschalten kann ein Admin unter System.</li>
+    <li>Wieder einschalten geht hier, ab Operator.</li>
   </ul>
   <form method="post" action="/system/notaus" class="row">
     <input type="hidden" name="csrf" value="{{.CSRF}}">
     <button class="btn" type="submit">{{icon "power"}}Relay pausieren</button>
     <a class="btn-outline" href="/">Abbrechen</a>
   </form>
+  {{else if .Data.Resume}}
+  <p class="lead">Das Relay ist durch Not-Aus pausiert. Vorher lief es im Modus <b>{{.Data.ResumeName}}</b>.</p>
+  <ul class="plain">
+    <li>Ist die Ursache behoben (Schleife, fremdes Relay, Sturm)? Sonst kommt das Problem sofort zurück.</li>
+    <li>Wieder einschalten stellt den Modus {{.Data.ResumeName}} her und steht im Verlauf.</li>
+  </ul>
+  <form method="post" action="/system/wieder-an" class="row" data-confirm="Das Relay läuft dann wieder im Modus {{.Data.ResumeName}} und verteilt Spiele zwischen den Netzen." data-confirm-title="Relay wieder einschalten?" data-confirm-ok="Einschalten">
+    <input type="hidden" name="csrf" value="{{.CSRF}}">
+    <button class="btn" type="submit">{{icon "power"}}Relay wieder einschalten</button>
+    <a class="btn-outline" href="/">Abbrechen</a>
+  </form>
   {{else}}
-  <p class="notice notice-neutral">{{icon "info"}}<span><b>{{.Live.State.Headline}}.</b> {{.Live.State.Text}}</span></p>
+  <p class="note" data-tone="neutral">{{icon "info"}}<span class="note-body"><b>{{.Live.State.Headline}}.</b> {{.Live.State.Text}}</span></p>
   <p><a class="btn-outline" href="/">Zur Übersicht</a></p>
   {{end}}
 </div>

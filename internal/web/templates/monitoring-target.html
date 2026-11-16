@@ -1,0 +1,106 @@
+{{define "content"}}
+{{$f := .Data}}{{$csrf := .CSRF}}
+<p class="crumbs"><a href="/system/monitoring">{{icon "back"}}Monitoring</a></p>
+<span class="bar"></span>
+{{if $f.ID}}<h1>{{$f.Name}} <em>bearbeiten</em></h1>{{else}}<h1>Ziel <em>hinzufügen</em></h1>{{end}}
+{{if not $f.ID}}
+<nav class="seg section-first" aria-label="Art des Ziels">
+  <a class="seg-item" href="/system/monitoring/ziel/neu?art=syslog"{{if eq $f.Kind "syslog"}} aria-current="true"{{end}}>Syslog</a>
+  <a class="seg-item" href="/system/monitoring/ziel/neu?art=otlp"{{if eq $f.Kind "otlp"}} aria-current="true"{{end}}>OpenTelemetry</a>
+  <a class="seg-item" href="/system/monitoring/ziel/neu?art=snmptrap"{{if eq $f.Kind "snmptrap"}} aria-current="true"{{end}}>SNMP-Trap</a>
+</nav>
+{{end}}
+{{with $f.Err}}<p class="note" data-tone="danger" role="alert">{{icon "alert"}}<span class="note-body">{{.}}</span></p>{{end}}
+
+<form method="post" action="/system/monitoring/ziel" class="form section-first">
+  <input type="hidden" name="csrf" value="{{$csrf}}">
+  <input type="hidden" name="id" value="{{$f.ID}}">
+  <input type="hidden" name="kind" value="{{$f.Kind}}">
+  <div class="field"><label class="label" for="name">Name</label>
+    <input id="name" name="name" required maxlength="60" value="{{$f.Name}}" placeholder="{{if eq $f.Kind "otlp"}}Zabbix APM{{else}}rsyslog{{end}}" autocomplete="off"></div>
+
+  {{if eq $f.Kind "syslog"}}
+  <div class="field"><label class="label" for="endpoint">Adresse</label>
+    <input id="endpoint" name="endpoint" required value="{{$f.Endpoint}}" class="mono" placeholder="10.0.0.5:514" autocomplete="off" spellcheck="false"></div>
+  <div class="field"><label class="label" for="transport">Übertragung</label>
+    <select id="transport" name="transport" data-toggles="tls-field" data-toggles-on="tls">
+      <option value="udp"{{if eq $f.Transport "udp"}} selected{{end}}>UDP (ohne Bestätigung)</option>
+      <option value="tcp"{{if eq $f.Transport "tcp"}} selected{{end}}>TCP</option>
+      <option value="tls"{{if eq $f.Transport "tls"}} selected{{end}}>TCP mit TLS</option>
+    </select></div>
+  <div class="field"><label class="label" for="format">Format</label>
+    <select id="format" name="format">
+      <option value="rfc5424"{{if eq $f.Format "rfc5424"}} selected{{end}}>RFC 5424 (mit strukturierten Daten)</option>
+      <option value="rfc3164"{{if eq $f.Format "rfc3164"}} selected{{end}}>RFC 3164 (alt, BSD)</option>
+    </select></div>
+  <div class="field"><label class="label" for="facility">Facility</label>
+    <select id="facility" name="facility">{{range $f.Facilities}}<option value="{{.}}"{{if eq . $f.Facility}} selected{{end}}>{{.}}</option>{{end}}</select></div>
+  <div id="tls-field">
+    <div class="field"><label class="label" for="tls_ca">CA-Zertifikat (optional, PEM)</label>
+      <textarea id="tls_ca" name="tls_ca" rows="4" class="mono" spellcheck="false" placeholder="-----BEGIN CERTIFICATE-----">{{$f.TLSCA}}</textarea></div>
+    <label class="radio"><input type="checkbox" name="tls_skip_verify" value="1"{{if $f.SkipVerify}} checked{{end}}><span>Zertifikat nicht prüfen <span class="small muted">(nur zum Testen)</span></span></label>
+  </div>
+  {{else if eq $f.Kind "snmptrap"}}
+  <div class="field"><label class="label" for="endpoint">Empfänger</label>
+    <input id="endpoint" name="endpoint" required value="{{$f.Endpoint}}" class="mono" placeholder="10.0.0.5:162" autocomplete="off" spellcheck="false"></div>
+  <div class="field"><label class="label" for="version">Version</label>
+    <select id="version" name="version" data-toggles="v3-field" data-toggles-on="v3" data-toggles-else="v2c-field">
+      <option value="v3"{{if eq $f.Version "v3"}} selected{{end}}>v3 (verschlüsselt)</option>
+      <option value="v2c"{{if eq $f.Version "v2c"}} selected{{end}}>v2c (Community im Klartext)</option>
+    </select></div>
+  <div id="v2c-field">
+    <div class="field"><label class="label" for="community">Community (geheim)</label>
+      <input id="community" name="community" type="password" autocomplete="new-password" placeholder="{{if has $f.SecretsSet "community"}}gesetzt, leer lassen = unverändert{{end}}"></div>
+  </div>
+  <div id="v3-field">
+    <div class="field"><label class="label" for="user">Benutzer</label>
+      <input id="user" name="user" value="{{$f.User}}" autocomplete="off" spellcheck="false"></div>
+    <div class="field"><label class="label" for="auth_proto">Authentifizierung</label>
+      <select id="auth_proto" name="auth_proto">{{range $p := (list "sha256" "sha512" "sha")}}<option value="{{$p}}"{{if eq $p $f.AuthProto}} selected{{end}}>{{upper $p}}</option>{{end}}</select></div>
+    <div class="field"><label class="label" for="auth_pass">Auth-Passwort (geheim, mind. 8 Zeichen)</label>
+      <input id="auth_pass" name="auth_pass" type="password" autocomplete="new-password" placeholder="{{if has $f.SecretsSet "auth_pass"}}gesetzt, leer lassen = unverändert{{end}}"></div>
+    <div class="field"><label class="label" for="priv_proto">Verschlüsselung</label>
+      <select id="priv_proto" name="priv_proto">{{range $p := (list "aes128" "aes256")}}<option value="{{$p}}"{{if eq $p $f.PrivProto}} selected{{end}}>{{upper $p}}</option>{{end}}</select></div>
+    <div class="field"><label class="label" for="priv_pass">Priv-Passwort (geheim, mind. 8 Zeichen)</label>
+      <input id="priv_pass" name="priv_pass" type="password" autocomplete="new-password" placeholder="{{if has $f.SecretsSet "priv_pass"}}gesetzt, leer lassen = unverändert{{end}}"></div>
+  </div>
+  <label class="radio"><input type="checkbox" name="inform" value="1"{{if $f.Inform}} checked{{end}}><span>Als Inform senden <span class="small muted">(Empfänger bestätigt, wird wiederholt)</span></span></label>
+  <p class="hint">MIB: <a href="/system/monitoring/mib">NETSESSION-RELAY-MIB laden</a>. Vorläufige Unternehmensnummer 32473, bis Netsession eine eigene hat.</p>
+  {{else}}
+  <div class="field"><label class="label" for="protocol">Protokoll</label>
+    <select id="protocol" name="protocol">
+      <option value="grpc"{{if eq $f.Protocol "grpc"}} selected{{end}}>gRPC (Port 4317, z. B. Zabbix 8)</option>
+      <option value="http"{{if eq $f.Protocol "http"}} selected{{end}}>HTTP/protobuf (Port 4318)</option>
+    </select></div>
+  <div class="field"><label class="label" for="endpoint">Adresse</label>
+    <input id="endpoint" name="endpoint" required value="{{$f.Endpoint}}" class="mono" placeholder="10.0.0.5:4317 oder http://10.0.0.5:4318" autocomplete="off" spellcheck="false" aria-describedby="ep-hint">
+    <p class="hint" id="ep-hint">gRPC: Adresse:Port. HTTP: URL ohne Pfad, <span class="mono">/v1/metrics</span> und <span class="mono">/v1/logs</span> hängt das Relay an.</p></div>
+  <fieldset class="radios"><legend class="label">Was senden</legend>
+    <label class="radio"><input type="checkbox" name="metrics" value="1"{{if $f.Metrics}} checked{{end}}><span>Metriken <span class="small muted">(alle Werte des Relays)</span></span></label>
+    <label class="radio"><input type="checkbox" name="logs" value="1"{{if $f.Logs}} checked{{end}}><span>Meldungen <span class="small muted">(Alarme und Verlauf, siehe unten)</span></span></label>
+  </fieldset>
+  <div class="field"><label class="label" for="interval_s">Metriken alle (Sekunden)</label>
+    <input id="interval_s" name="interval_s" type="number" min="10" max="300" value="{{$f.Interval}}" class="mono"></div>
+  <details class="fold"{{if or $f.TLS $f.HeaderNames $f.RuleMetrics $f.Gzip}} open{{end}}>
+    <summary><span class="label">Erweitert: TLS, Header, Komprimierung</span></summary>
+  <label class="radio"><input type="checkbox" name="tls" value="1"{{if $f.TLS}} checked{{end}}><span>TLS</span></label>
+  <div class="field"><label class="label" for="tls_ca">CA-Zertifikat für TLS (optional, PEM)</label>
+    <textarea id="tls_ca" name="tls_ca" rows="3" class="mono" spellcheck="false" placeholder="-----BEGIN CERTIFICATE-----">{{$f.TLSCA}}</textarea></div>
+  <label class="radio"><input type="checkbox" name="tls_skip_verify" value="1"{{if $f.SkipVerify}} checked{{end}}><span>Zertifikat nicht prüfen <span class="small muted">(nur zum Testen)</span></span></label>
+  <div class="field"><label class="label" for="headers">Header (optional, geheim)</label>
+    <textarea id="headers" name="headers" rows="2" class="mono" spellcheck="false" placeholder="Authorization: Bearer …" aria-describedby="hdr-hint"></textarea>
+    <p class="hint" id="hdr-hint">„Name: Wert“, einer pro Zeile. Werte werden nie angezeigt.{{with $f.HeaderNames}} Gesetzt: <span class="mono">{{join . ", "}}</span>. Leer lassen = unverändert.{{end}}</p></div>
+  {{if $f.HeaderNames}}<label class="radio"><input type="checkbox" name="clear_headers" value="1"><span>Gesetzte Header löschen</span></label>{{end}}
+  <label class="radio"><input type="checkbox" name="rule_metrics" value="1"{{if $f.RuleMetrics}} checked{{end}}><span>Zähler je Regel mitsenden <span class="small muted">(viele Reihen)</span></span></label>
+  <label class="radio"><input type="checkbox" name="gzip" value="1"{{if $f.Gzip}} checked{{end}}><span>Komprimieren (gzip)</span></label>
+  </details>
+  {{end}}
+
+  <fieldset class="radios"><legend class="label">Meldungen</legend>
+    <label class="radio"><input type="checkbox" name="alarm" value="1"{{if $f.Alarm}} checked{{end}}><span>Alarme <span class="small muted">(geöffnet und beendet, auch „Engine weg“)</span></span></label>
+    <label class="radio"><input type="checkbox" name="audit" value="1"{{if $f.Audit}} checked{{end}}><span>Verlauf <span class="small muted">(jede Änderung: Spiel an, Netz aus, Not-Aus …)</span></span></label>
+  </fieldset>
+  <label class="radio"><input type="checkbox" name="enabled" value="1"{{if $f.Enabled}} checked{{end}}><span>Eingeschaltet</span></label>
+  <div class="actions"><button class="btn" type="submit">Speichern</button> <a class="btn-outline" href="/system/monitoring">Abbrechen</a></div>
+</form>
+{{end}}

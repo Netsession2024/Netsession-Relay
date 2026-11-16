@@ -1,6 +1,7 @@
 package web
 
 import (
+	"cmp"
 	"context"
 	"encoding/json"
 	"fmt"
@@ -62,23 +63,28 @@ func stateOf(st engineapi.Status, engineOK bool) stateView {
 }
 
 type vlanView struct {
-	VID       int    `json:"vid"`
-	Name      string `json:"name"`
-	Group     string `json:"group"`
-	Key       string `json:"key"`
-	Enabled   bool   `json:"enabled"` // in the configuration
-	Running   bool   `json:"running"` // known to the engine
-	Alarm     bool   `json:"alarm"`
-	InRate    uint64 `json:"in_per_s"`
-	In        uint64 `json:"in"`
-	Out       uint64 `json:"out"`
-	Status    string `json:"status"` // word for the tile: Verkehr | still | aus | Alarm
+	VID     int    `json:"vid"`
+	Name    string `json:"name"`
+	Group   string `json:"group"`
+	Key     string `json:"key"`
+	Enabled bool   `json:"enabled"` // in the configuration
+	Running bool   `json:"running"` // known to the engine
+	Alarm   bool   `json:"alarm"`
+	InRate  uint64 `json:"in_per_s"`
+	In      uint64 `json:"in"`
+	Out     uint64 `json:"out"`
+	Status  string `json:"status"` // state of the tile: Verkehr | still | aus | Alarm | nicht im Relay
+	Label   string `json:"label"`  // word shown on the tile: the status, or the name of the alarm
+	// AlarmKind is the alarm this network is part of ("" = none); the tile links to that alarm card.
+	AlarmKind string `json:"alarm_kind,omitempty"`
 	Interface string `json:"-"`
 }
 
 type busyRow struct {
 	Rule    string `json:"rule"`
-	Names   string `json:"names"`
+	Names   string `json:"names"`          // short: first game, "+N" for the others on the same port
+	Game    string `json:"game,omitempty"` // id of the first game, for the link
+	All     string `json:"all,omitempty"`  // every game on this rule
 	Ports   string `json:"ports"`
 	Rate    uint64 `json:"per_s"`
 	RX      uint64 `json:"rx"`
@@ -93,16 +99,32 @@ type reasonView struct {
 
 // alarmGroup aggregates alarms of one kind (e.g. a foreign relay seen in 16 VLANs) into one entry.
 type alarmGroup struct {
-	Kind   string    `json:"kind"`
-	Title  string    `json:"title"`
-	Hint   string    `json:"hint,omitempty"`
-	Keys   []string  `json:"-"`
-	Where  string    `json:"where"`
-	Count  uint64    `json:"count"`
-	Last   time.Time `json:"last"`
-	Detail string    `json:"detail"`
-	Acked  bool      `json:"acked"`
-	By     string    `json:"acked_by,omitempty"`
+	Kind   string     `json:"kind"`
+	Title  string     `json:"title"`
+	Hint   string     `json:"hint,omitempty"`
+	Keys   []string   `json:"-"`
+	Nets   []alarmNet `json:"nets"`  // affected networks (keys that are VLAN ids)
+	Where  string     `json:"where"` // the keys that are not networks (rules), "" if there are none
+	Count  uint64     `json:"count"`
+	Last   time.Time  `json:"last"`
+	Detail string     `json:"detail"`
+	Acked  bool       `json:"acked"`
+	By     string     `json:"acked_by,omitempty"`
+}
+
+// alarmNet is one network an alarm concerns; the alarm card links to its tile.
+type alarmNet struct {
+	VID  int    `json:"vid"`
+	Name string `json:"name"`
+	Key  string `json:"key"`
+}
+
+// alarmShort is the alarm name as it fits on a network tile.
+var alarmShort = map[string]string{
+	"foreign_relay": "Fremdes Relay",
+	"loop":          "Schleife",
+	"storm":         "Sturm-Bremse",
+	"dual_active":   "Zweites Relay",
 }
 
 type liveView struct {
@@ -185,9 +207,7 @@ func groupAlarms(alarms []engineapi.Alarm, mode string) []alarmGroup {
 		g := byKind[k]
 		sort.Strings(g.Keys)
 		g.Where = strings.Join(g.Keys, " · ")
-		if n := len(g.Keys); n > 1 {
-			g.Where = fmt.Sprintf("%d Stellen: %s", n, g.Where)
-		}
+		g.Nets = []alarmNet{}
 		out = append(out, *g)
 	}
 	sort.SliceStable(out, func(i, j int) bool { return out[i].Last.After(out[j].Last) })
@@ -256,13 +276,7 @@ func (s *Server) liveNow(ctx context.Context) *liveView {
 		Rules: st.RuleStats, Unknown: st.TopUnknown, Reasons: []reasonView{},
 		ruleRX: map[string]uint64{}, games: map[string]store.GameRow{}}
 	v.State = stateOf(st, v.EngineOK)
-	for _, g := range groupAlarms(st.Alarms, st.Mode) {
-		if g.Acked {
-			v.Seen = append(v.Seen, g)
-		} else {
-			v.Alarms = append(v.Alarms, g)
-		}
-	}
+	groups := groupAlarms(st.Alarms, st.Mode)
 	if v.Rules == nil {
 		v.Rules = []engineapi.RuleStat{}
 	}
@@ -283,9 +297,14 @@ func (s *Server) liveNow(ctx context.Context) *liveView {
 	}
 
 	// VLANs: configuration first (so switched-off tables stay visible), engine counters merged in
-	alarmKeys := map[string]bool{}
-	for _, a := range st.Alarms {
-		alarmKeys[a.Key] = true
+	// which alarm a network is part of: an open one wins over an acknowledged one
+	alarmOf := map[string]string{}
+	for _, open := range []bool{false, true} {
+		for _, a := range st.Alarms {
+			if a.AckedAt.IsZero() == open {
+				alarmOf[a.Key] = a.Kind
+			}
+		}
 	}
 	stats := map[int]engineapi.VLANStat{}
 	for _, x := range st.VLANStats {
@@ -296,7 +315,8 @@ func (s *Server) liveNow(ctx context.Context) *liveView {
 		x, running := stats[vid]
 		seen[vid] = true
 		t := vlanView{VID: vid, Name: name, Group: group, Key: tableKey(name, group), Enabled: enabled, Running: running,
-			InRate: x.InRate, In: x.In, Out: x.Out, Interface: x.Interface, Alarm: alarmKeys[strconv.Itoa(vid)]}
+			InRate: x.InRate, In: x.In, Out: x.Out, Interface: x.Interface, AlarmKind: alarmOf[strconv.Itoa(vid)]}
+		t.Alarm = t.AlarmKind != ""
 		switch {
 		case !enabled:
 			t.Status = "aus"
@@ -309,6 +329,12 @@ func (s *Server) liveNow(ctx context.Context) *liveView {
 		default:
 			t.Status = "still"
 		}
+		t.Label = t.Status
+		if t.Status == "Alarm" {
+			t.Label = cmp.Or(alarmShort[t.AlarmKind], alarmTitles[t.AlarmKind], t.AlarmKind)
+		} else {
+			t.AlarmKind = ""
+		}
 		v.VLANs = append(v.VLANs, t)
 	}
 	if c, err := s.Store.ExportConfig(ctx); err == nil {
@@ -319,6 +345,27 @@ func (s *Server) liveNow(ctx context.Context) *liveView {
 	for _, x := range st.VLANStats {
 		if !seen[x.VID] {
 			addVLAN(x.VID, x.Name, x.Group, true)
+		}
+	}
+
+	// alarms: keys that are networks become links to the tiles, the rest stays as text
+	for _, g := range groups {
+		var rest []string
+		for _, k := range g.Keys {
+			vid, err := strconv.Atoi(k)
+			i := slices.IndexFunc(v.VLANs, func(x vlanView) bool { return err == nil && x.VID == vid })
+			if i < 0 {
+				rest = append(rest, k)
+				continue
+			}
+			g.Nets = append(g.Nets, alarmNet{VID: vid, Name: v.VLANs[i].Name, Key: v.VLANs[i].Key})
+		}
+		sort.Slice(g.Nets, func(i, j int) bool { return g.Nets[i].VID < g.Nets[j].VID })
+		g.Where = strings.Join(rest, " · ")
+		if g.Acked {
+			v.Seen = append(v.Seen, g)
+		} else {
+			v.Alarms = append(v.Alarms, g)
 		}
 	}
 
@@ -338,18 +385,18 @@ func (s *Server) liveNow(ctx context.Context) *liveView {
 		row := busyRow{Rule: rs.ID, Names: rs.ID, RX: rs.RX, Relayed: rs.Relayed, Rate: rates[rs.ID]}
 		if r, ok := idx.byRule[rs.ID]; ok {
 			row.Ports = r.Ports
-			var names []string
-			for _, id := range r.Specs {
-				if g, ok := v.games[id]; ok {
-					names = append(names, g.Name)
-				} else {
-					names = append(names, id)
+			refs := gameRefs(r.Specs, v.games)
+			if len(refs) > 0 {
+				row.Game, row.Names = refs[0].ID, shortName(refs[0].Name)
+				if n := len(refs) - 1; n > 0 {
+					row.Names += fmt.Sprintf(" +%d", n)
 				}
+				var all []string
+				for _, g := range refs {
+					all = append(all, g.Name)
+				}
+				row.All = strings.Join(all, " · ")
 			}
-			if len(names) > 2 {
-				names = append(names[:2], fmt.Sprintf("+ %d weitere", len(names)-2))
-			}
-			row.Names = strings.Join(names, ", ")
 		}
 		v.Busy = append(v.Busy, row)
 	}
@@ -633,4 +680,60 @@ func rulesFor(idx *ruleIndex, id string, v *liveView) []ruleView {
 		out = append(out, rv)
 	}
 	return out
+}
+
+// gameRef names a game for a link.
+type gameRef struct {
+	ID   string
+	Name string
+}
+
+// gameRefs lists the games that share a rule (same port): switched-on games first, then by name.
+func gameRefs(ids []string, games map[string]store.GameRow) []gameRef {
+	out := make([]gameRef, 0, len(ids))
+	on := map[string]bool{}
+	for _, id := range ids {
+		g, ok := games[id]
+		if !ok {
+			out = append(out, gameRef{ID: id, Name: id})
+			continue
+		}
+		on[id] = g.Enabled
+		out = append(out, gameRef{ID: id, Name: g.Name})
+	}
+	sort.SliceStable(out, func(i, j int) bool {
+		if on[out[i].ID] != on[out[j].ID] {
+			return on[out[i].ID]
+		}
+		return strings.ToLower(out[i].Name) < strings.ToLower(out[j].Name)
+	})
+	return out
+}
+
+// shortName cuts a database name down to the first title: "ARMA 2 / Operation Arrowhead / DayZ Mod" becomes
+// "ARMA 2", "TrackMania 2 (Canyon/Stadium)" becomes "TrackMania 2". The full name stays one tap away.
+func shortName(name string) string {
+	for _, sep := range []string{" / ", " ("} {
+		if i := strings.Index(name, sep); i > 2 {
+			name = name[:i]
+		}
+	}
+	return name
+}
+
+// alarmNetsText sums up the open alarms for the key figure: how many networks they concern.
+func alarmNetsText(list []alarmGroup) string {
+	seen := map[int]bool{}
+	for _, g := range list {
+		for _, n := range g.Nets {
+			seen[n.VID] = true
+		}
+	}
+	switch len(seen) {
+	case 0:
+		return "siehe unten"
+	case 1:
+		return "betrifft 1 Netz"
+	}
+	return fmt.Sprintf("betrifft %d Netze", len(seen))
 }

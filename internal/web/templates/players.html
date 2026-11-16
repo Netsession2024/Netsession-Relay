@@ -1,31 +1,67 @@
 {{define "players-table"}}
-{{if .Err}}<p class="notice notice-danger">{{icon "alert"}}<span>Die Engine antwortet nicht. Die Liste kommt wieder, sobald sie läuft.</span></p>
-{{else if .Rows}}
-<div class="tablewrap"><table class="players">
-  <thead><tr><th>Spiel</th><th>Rolle</th><th>Netz</th><th>Adresse</th><th class="col-opt">Seit</th><th>Zuletzt</th><th class="num col-opt">Pakete</th></tr></thead>
-  <tbody>
-  {{range .Rows}}<tr>
-    <td>{{if .GameID}}<a class="rowlink" href="/spiele/{{.GameID}}">{{.Games}}</a>{{else}}<span class="mono">{{.Games}}</span>{{end}}</td>
-    <td><span class="tag role {{.RoleCls}}">{{.Role}}</span></td>
-    <td><span class="netname"><span class="key key-sm" aria-hidden="true">{{.Key}}</span><span>{{.VLAN}}<br><span class="mono small muted">VLAN {{.VID}}</span></span></span></td>
-    <td class="mono">{{.IP}}</td>
-    <td class="col-opt nowrap">{{ts .First "time"}}</td>
-    <td class="nowrap">{{ts .Last "time"}}</td>
-    <td class="num mono col-opt">{{num .Count}}</td>
-  </tr>{{end}}
-  </tbody>
-</table></div>
-{{else}}<p class="quiet">{{icon "info"}}<span>Gerade sucht oder hostet niemand ein Spiel. Sobald jemand den LAN-Browser öffnet, steht es hier.</span></p>{{end}}
+{{if .Err}}<p class="note" data-tone="danger">{{icon "alert"}}<span class="note-body">Die Engine antwortet nicht. Die Liste kommt wieder, sobald sie läuft.</span></p>
+{{else if .Groups}}
+<p class="small muted">{{.Players}} {{if eq .Players 1}}PC{{else}}PCs{{end}} in {{len .Groups}} {{if eq (len .Groups) 1}}Spiel{{else}}Spielen{{end}}, letzte 15 Minuten.</p>
+<div class="pgroups">
+{{range .Groups}}
+<section class="panel pgroup">
+  <div class="pg-head">
+    <h2 class="pg-title">
+      {{if .GameID}}<a class="rowlink" href="/spiele/{{.GameID}}">{{.Title}}</a>{{else}}<span class="mono">{{.Title}}</span>{{end}}
+      {{if .More}}<details class="more" data-key="more-{{.Rule}}">
+        <summary aria-label="{{len .More}} weitere Spiele auf demselben Port">+{{len .More}}</summary>
+        <div class="more-body">
+          <p>Gleicher Port{{if .Ports}} <span class="mono">{{.Ports}}</span>{{end}}. Am Paket nicht zu unterscheiden:</p>
+          <ul>{{range .More}}<li><a class="rowlink" href="/spiele/{{.ID}}">{{.Name}}</a></li>{{end}}</ul>
+        </div>
+      </details>{{end}}
+    </h2>
+    <p class="pg-sum">
+      {{if .HostAt}}<span class="flag" data-tone="ok">{{icon "check"}}Server offen: {{.HostAt}}</span>{{end}}
+      <span>{{len .Players}} {{if eq (len .Players) 1}}PC{{else}}PCs{{end}} · {{.Tables}} {{if eq .Tables 1}}Netz{{else}}Netze{{end}}</span>
+    </p>
+  </div>
+  <ul class="plist">
+    {{range .Players}}
+    <li class="prow">
+      <span class="netname"><span class="key key-sm" aria-hidden="true">{{.Key}}</span><span>{{.VLAN}}<span class="sr">, VLAN {{.VID}}</span></span></span>
+      <span class="mono prow-ip">{{.IP}}</span>
+      <span class="role" data-role="{{.Role}}"><i class="dot" aria-hidden="true"></i>{{.Role}}</span>
+      <span class="prow-time" title="{{num .Count}} Pakete"><span class="prow-since">seit {{ts .First "time"}} · </span>{{.Ago}}</span>
+      {{if ge .Spread 3}}<span class="prow-svc small">fragt {{.Spread}} Spiele ab{{if $.Admin}} · <a href="{{serviceURL .IP}}" title="Als Dienst markieren (z. B. Discord-Notifier), zählt dann nicht mehr mit">Dienst?</a>{{end}}</span>{{end}}
+    </li>
+    {{end}}
+  </ul>
+</section>
+{{end}}
+</div>
+{{else}}<p class="quiet">{{icon "info"}}<span>Gerade sucht oder hostet niemand. Sobald jemand den LAN-Browser öffnet, steht es hier.</span></p>{{end}}
+{{if and .Services (not .Err)}}
+<details class="fold pservices" data-key="dienste">
+  <summary><span class="label">Dienste, zählen nicht mit ({{len .Services}})</span></summary>
+  <ul class="plist">
+    {{range .Services}}
+    <li class="prow">
+      <span class="netname"><span class="key key-sm" aria-hidden="true">{{.Key}}</span><span><b>{{.Name}}</b><br><span class="small muted">{{.VLAN}}</span></span></span>
+      <span class="mono prow-ip">{{.IP}}</span>
+      <span class="small">fragt {{len .Games}} {{if eq (len .Games) 1}}Spiel{{else}}Spiele{{end}} ab: {{join .Games ", "}}</span>
+      <span class="prow-time" title="{{num .Count}} Pakete">{{.Ago}}</span>
+    </li>
+    {{end}}
+  </ul>
+  {{if $.Admin}}<p class="small muted">Verwalten unter <a href="/system#dienste">System → Dienste im Netz</a>.</p>{{end}}
+</details>
+{{end}}
 {{end}}
 
 {{define "content"}}
 <span class="bar"></span>
 <h1>Wer <em>spielt</em> was</h1>
-<p class="lead">Alle, die in den letzten 15 Minuten ein Spiel gesucht oder angeboten haben. Aktualisiert sich alle 5 Sekunden.</p>
+<p class="lead">Wer in den letzten 15 Minuten ein Spiel gesucht oder angeboten hat, nach Spiel sortiert.</p>
 <div id="players" class="section-first" data-refresh="/spieler?teil=tabelle">{{template "players-table" .Data}}</div>
 <dl class="rolekey">
-  <div><dt><span class="tag role role-host">hostet</span></dt><dd>Das Spiel meldet einen offenen Server.</dd></div>
-  <div><dt><span class="tag role role-search">sucht</span></dt><dd>Jemand hat den LAN-Browser offen.</dd></div>
-  <div><dt><span class="tag role role-search">aktiv</span></dt><dd>Sucht oder hostet. Am Paket nicht zu unterscheiden (z. B. FlatOut).</dd></div>
+  <div><dt><span class="role" data-role="hostet"><i class="dot" aria-hidden="true"></i>hostet</span></dt><dd>offener Server</dd></div>
+  <div><dt><span class="role" data-role="sucht"><i class="dot" aria-hidden="true"></i>sucht</span></dt><dd>LAN-Browser offen</dd></div>
+  <div><dt><span class="role" data-role="aktiv"><i class="dot" aria-hidden="true"></i>aktiv</span></dt><dd>sucht oder hostet, am Paket nicht zu unterscheiden (z. B. FlatOut)</dd></div>
 </dl>
 {{end}}

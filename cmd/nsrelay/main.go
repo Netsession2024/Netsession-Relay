@@ -30,6 +30,7 @@ import (
 	"github.com/Netsession2024/Netsession-Relay/internal/engineapi"
 	"github.com/Netsession2024/Netsession-Relay/internal/gamedb"
 	"github.com/Netsession2024/Netsession-Relay/internal/lab"
+	"github.com/Netsession2024/Netsession-Relay/internal/snmp"
 )
 
 // Set at build time via -ldflags "-X main.version=... -X main.commit=...".
@@ -53,6 +54,16 @@ var commands = []command{
 	{"import", 0, "import opnsense <config.xml>...: report on existing OPNsense relay settings", runImport},
 	{"health", 0, "check a health URL (container health checks; no curl in the image)", runHealth},
 	{"backup", 0, "backup [-dir] | backup restore <file>", runBackup},
+	{"snmp-mib", 0, "print NETSESSION-RELAY-MIB; -zabbix: the Zabbix SNMP template (deploy/zabbix/template_nsrelay_snmp.yaml)", runSNMPMIB},
+}
+
+func runSNMPMIB(args []string, stdout, _ io.Writer) int {
+	if len(args) > 0 && args[0] == "-zabbix" {
+		fmt.Fprint(stdout, snmp.ZabbixTemplate())
+		return 0
+	}
+	fmt.Fprint(stdout, snmp.MIB())
+	return 0
 }
 
 func main() {

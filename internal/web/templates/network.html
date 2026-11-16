@@ -1,15 +1,22 @@
 {{define "content"}}
-{{$csrf := .CSRF}}
-<span class="bar"></span>
-<h1>Spiele-<em>Netze</em></h1>
-<p class="lead">{{.Data.On}} von {{.Data.Total}} Netzen an. Ein VLAN pro Tisch. Braucht ihr einen Tisch nicht, schalte ihn aus.</p>
+{{$csrf := .CSRF}}{{$groupN := .Data.GroupN}}{{$alarms := .Live.Alarms}}
+<div class="pagehead">
+  <div>
+    <span class="bar"></span>
+    <h1>Spiele-<em>Netze</em></h1>
+    <p class="lead">{{.Data.On}} von {{.Data.Total}} Netzen an. Ein VLAN pro Tisch. Braucht ihr einen Tisch nicht, schalte ihn aus.</p>
+  </div>
+  <div class="pagehead-act"><a class="btn" href="/netz/neu">{{icon "plus"}}Netz anlegen</a></div>
+</div>
 
 <div class="tablewrap">
-<table class="vlans">
-  <thead><tr><th class="col-switch">Im Relay</th><th>Netz</th><th class="col-opt">Gruppe</th><th class="col-opt">Adressen</th><th class="col-opt2">Relay-IP</th><th class="col-opt2">Interface</th><th class="num">Rein/s</th><th class="num col-opt">Rein</th><th class="num col-opt">Raus</th></tr></thead>
-  <tbody>
-  {{range .Data.VLANs}}
-  <tr data-vlan="{{.VID}}" data-status="{{.Live.Status}}">
+<table class="vlans stack">
+  <thead><tr><th class="col-switch">Weiterleiten</th><th>Netz</th><th>Adressen</th><th class="col-opt2">Relay-IP</th><th class="col-opt2">Interface</th><th class="num">Rein/s</th><th class="num col-opt">Rein</th><th class="num col-opt">Raus</th><th class="col-act"><span class="sr">Bearbeiten</span></th></tr></thead>
+  {{range .Data.Groups}}
+  <tbody id="gruppe-{{.Name}}">
+  <tr class="grouprow"><th colspan="9" scope="rowgroup">{{group .Name}}<span class="count">{{len .Rows}}</span></th></tr>
+  {{range .Rows}}
+  <tr id="netz-{{.VID}}" data-vlan="{{.VID}}" data-status="{{.Live.Status}}">
     <td class="col-switch">
       <form method="post" action="/netz/{{.VID}}" class="toggle-form" data-confirm="Spiele aus {{.Name}} werden dann nicht mehr in andere Netze verteilt und umgekehrt." data-confirm-title="{{.Name}} ausschalten?" data-confirm-ok="Ausschalten">
         <input type="hidden" name="csrf" value="{{$csrf}}">
@@ -17,30 +24,73 @@
         <button class="switch" type="submit" role="switch" aria-checked="{{if .Enabled}}true{{else}}false{{end}}" aria-label="{{.Name}} (VLAN {{.VID}})"><span class="track" aria-hidden="true"><i></i></span><span class="switch-word" aria-hidden="true">{{if .Enabled}}An{{else}}Aus{{end}}</span></button>
       </form>
     </td>
-    <td><span class="netname"><span class="key key-sm" aria-hidden="true">{{.Key}}</span><span><b>{{.Name}}</b><br><span class="mono small muted">VLAN {{.VID}}</span></span></span></td>
-    <td class="col-opt">{{group .Group}}</td>
-    <td class="mono col-opt">{{.CIDR}}</td>
-    <td class="mono col-opt2">{{.RelayIP}}</td>
-    <td class="mono small col-opt2">{{.Iface}}</td>
-    <td class="num mono" data-f="rate">{{num .Live.InRate}}</td>
-    <td class="num mono col-opt" data-f="in">{{num .Live.In}}</td>
-    <td class="num mono col-opt" data-f="out">{{num .Live.Out}}</td>
+    <td class="stack-main"><span class="netname"><span class="key key-sm" aria-hidden="true">{{.Key}}</span><span><a class="rowlink" href="/netz/{{.VID}}/bearbeiten"><b>{{.Name}}</b></a><br><span class="mono small muted">VLAN {{.VID}}</span>{{if .Live.AlarmKind}} <a class="flag" data-tone="danger" href="/#alarm-{{.Live.AlarmKind}}">{{icon "alert"}}{{.Live.Label}}</a>{{end}}</span></span></td>
+    <td class="mono" data-th="Adressen">{{.CIDR}}</td>
+    <td class="mono col-opt2" data-th="Relay-IP">{{.RelayIP}}</td>
+    <td class="mono small col-opt2" data-th="Interface">{{.Iface}}</td>
+    <td class="num mono" data-th="Rein/s" data-f="rate">{{num .Live.InRate}}</td>
+    <td class="num mono col-opt" data-th="Rein" data-f="in">{{num .Live.In}}</td>
+    <td class="num mono col-opt" data-th="Raus" data-f="out">{{num .Live.Out}}</td>
+    <td class="col-act"><a class="icon-btn" href="/netz/{{.VID}}/bearbeiten" aria-label="{{.Name}} bearbeiten" title="Bearbeiten">{{icon "edit"}}</a></td>
   </tr>
   {{end}}
   </tbody>
+  {{else}}<tbody><tr><td colspan="9" class="muted">Noch kein Netz. Lege das erste an.</td></tr></tbody>
+  {{end}}
 </table>
 </div>
-<p class="small muted">Rein: Broadcasts, die aus dem Netz ankommen. Raus: Kopien, die das Relay in das Netz sendet. Zähler seit dem Start der Engine.</p>
+<p class="small muted">Rein = Broadcasts aus dem Netz. Raus = Kopien, die das Relay in das Netz sendet. Zähler seit dem Start der Engine.</p>
 
-<section class="section">
-  <h2>Wer sieht wessen Spiele</h2>
-  <p class="muted">Ein Haken heißt: Spiele aus Netzen der Zeile werden in Netze der Spalte kopiert. Gleiche Gruppe heißt zwischen allen Netzen dieser Gruppe.</p>
-  {{range .Data.Profiles}}
-  <h3>Profil <span class="mono">{{.Name}}</span>{{if .Default}} <span class="tag">Standard</span>{{end}}</h3>
-  <div class="tablewrap matrixwrap"><table class="matrix">
-    <thead><tr><th scope="col">von ↓ nach →</th>{{range .Groups}}<th scope="col">{{group .}}</th>{{end}}</tr></thead>
-    <tbody>{{range .Rows}}<tr><th scope="row">{{group .Src}}</th>{{range .Cells}}<td>{{if .}}<span class="yes">{{icon "check"}}<span class="sr">ja</span></span>{{else}}<span class="no" aria-hidden="true">–</span><span class="sr">nein</span>{{end}}</td>{{end}}</tr>{{end}}</tbody>
-  </table></div>
+<section class="section" id="profile" aria-labelledby="profile-h">
+  <h2 id="profile-h">Wer sieht wessen Spiele</h2>
+  <p class="prose">Ein Profil legt fest, zwischen welchen Gruppen die Spiele-Rufe (Suche und Ankündigung) kopiert werden: von der Zeile in die Spalte. Sollen sich zwei Gruppen gegenseitig finden, setz beide Haken. Jedes Spiel nutzt das Standardprofil, außer auf seiner Seite ist ein anderes gewählt.</p>
+  {{range $p := .Data.Profiles}}
+  <div class="panel profile" id="profil-{{$p.Name}}">
+    <div class="panel-head">
+      <h3>Profil {{$p.Name}}{{if $p.Default}} <span class="tag">Standard</span>{{end}}</h3>
+      <div class="profile-tools">
+        {{if not $p.Default}}
+        <form method="post" action="/profil/{{$p.Name}}/standard" data-confirm="Alle Spiele ohne eigene Wahl nutzen dann das Profil {{$p.Name}}. Gilt sofort." data-confirm-title="{{$p.Name}} zum Standard machen?" data-confirm-ok="Zum Standard machen"><input type="hidden" name="csrf" value="{{$csrf}}"><button class="btn-outline btn-sm" type="submit">Zum Standard machen</button></form>
+        <form method="post" action="/profil/{{$p.Name}}/loeschen" data-confirm="Spiele mit diesem Profil nutzen danach das Standardprofil." data-confirm-title="Profil {{$p.Name}} löschen?" data-confirm-ok="Löschen"><input type="hidden" name="csrf" value="{{$csrf}}"><button class="btn-outline btn-sm btn-danger" type="submit">{{icon "trash"}}<span>Löschen</span></button></form>
+        {{end}}
+      </div>
+    </div>
+    <p class="small muted">{{if $p.Default}}Für alle Spiele ohne eigene Wahl. {{end}}{{with $p.Games}}Gerade genutzt von {{len .}} {{if eq (len .) 1}}Spiel{{else}}Spielen{{end}}{{if le (len .) 6}}: {{join . ", "}}{{end}}.{{else}}Kein eingeschaltetes Spiel nutzt dieses Profil.{{end}}</p>
+    <form method="post" action="/profil/{{$p.Name}}" data-edge="/profil/{{$p.Name}}/kante">
+      <input type="hidden" name="csrf" value="{{$csrf}}">
+      <div class="matrixwrap"><table class="matrix">
+        <thead>
+          <tr><td class="matrix-corner" rowspan="2"><span class="label">Von</span></td><th class="matrix-to" colspan="{{len $p.Groups}}" scope="colgroup"><span class="label">Nach</span></th></tr>
+          <tr>{{range $p.Groups}}<th scope="col">{{group .}}<span class="matrix-n">{{with index $groupN .}}{{.}} {{if eq . 1}}Netz{{else}}Netze{{end}}{{else}}kein Netz{{end}}</span></th>{{end}}</tr>
+        </thead>
+        <tbody>{{range $row := $p.Rows}}<tr><th scope="row">{{group $row.Src}}<span class="matrix-n">{{with index $groupN $row.Src}}{{.}} {{if eq . 1}}Netz{{else}}Netze{{end}}{{else}}kein Netz{{end}}</span></th>{{range $j, $c := $row.Cells}}{{$dst := index $p.Groups $j}}<td{{if eq $row.Src $dst}} class="same"{{end}}><label class="cell"><input type="checkbox" name="e" value="{{$row.Src}}>{{$dst}}"{{if $c}} checked{{end}}{{if or (eq $dst "wlan") (eq $dst "orga")}} data-ask-title="{{group $row.Src}} → {{group $dst}} einschalten?" data-ask="Spiele-Rufe aus {{group $row.Src}} werden dann auch nach {{group $dst}} kopiert. Das bringt dort mehr Verkehr."{{end}}><span class="sr">von {{group $row.Src}} nach {{group $dst}}</span></label></td>{{end}}</tr>{{end}}</tbody>
+      </table></div>
+      {{with $p.Reading}}<p class="hint">{{.}} Das Feld mit derselben Gruppe in Zeile und Spalte heißt: zwischen den Netzen dieser Gruppe.</p>{{end}}
+      <p class="hint" data-live-note hidden>Ein Haken gilt sofort.</p>
+      <div class="actions" data-save><button class="btn-outline" type="submit">Profil speichern</button></div>
+    </form>
+    <details class="fold">
+      <summary><span class="label">Umbenennen</span></summary>
+      <form method="post" action="/profil/{{$p.Name}}/umbenennen" class="inline-form">
+        <input type="hidden" name="csrf" value="{{$csrf}}">
+        <div class="field"><label class="label" for="to-{{$p.Name}}">Neuer Name</label>
+          <input id="to-{{$p.Name}}" name="to" required pattern="[a-z0-9][a-z0-9_\-]{0,31}" class="mono" value="{{$p.Name}}" autocomplete="off" spellcheck="false"></div>
+        <button class="btn-outline" type="submit">Umbenennen</button>
+      </form>
+    </details>
+  </div>
   {{end}}
+  <details class="fold section-first">
+    <summary><span class="label">Neues Profil anlegen</span></summary>
+    <form method="post" action="/profil/neu" class="inline-form">
+      <input type="hidden" name="csrf" value="{{$csrf}}">
+      <div class="field"><label class="label" for="pname">Name</label>
+        <input id="pname" name="name" required pattern="[a-z0-9][a-z0-9_\-]{0,31}" class="mono" placeholder="nur-tische" autocomplete="off" spellcheck="false"></div>
+      <div class="field"><label class="label" for="pcopy">Haken übernehmen von</label>
+        <select id="pcopy" name="copy"><option value="">keinem (leer)</option>{{range .Data.Profiles}}<option value="{{.Name}}">{{.Name}}</option>{{end}}</select></div>
+      <button class="btn-outline" type="submit">Profil anlegen</button>
+    </form>
+    <p class="hint">Ein zweites Profil brauchst du nur, wenn einzelne Spiele andere Wege gehen sollen, z. B. nur von Tisch zu Tisch.</p>
+  </details>
 </section>
 {{end}}
